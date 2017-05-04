@@ -1,0 +1,57 @@
+/*! \mainpage
+
+\defgroup API The OpenCL API
+\defgroup Os
+\defgroup Threads
+\defgroup Runtime
+\defgroup CPU
+\defgroup GPU
+\defgroup Utils
+
+\addtogroup API
+@{
+\defgroup CL_PlatformInfo Querying Platform Info
+\defgroup CL_Devices Querying Devices
+\defgroup CL_Contexts Contexts
+\defgroup CL_Queues Command Queue
+\defgroup CL_MemObjs Memory Objects
+\defgroup CL_Samplers Sampler Objects
+\defgroup CL_Programs Programs
+\defgroup CL_Kernels Kernel Objects
+\defgroup CL_Exec Executing Kernel Objects
+\defgroup CL_Events Event Objects
+\defgroup CL_Order Out of order Execution of Kernels and Memory Commands
+\defgroup CL_Profiling Profiling Operations on Memory Objects and Kernels
+\defgroup CL_FlushFinish Flush and Finish
+@}
+
+\addtogroup CL_MemObjs
+@{
+\defgroup CL_CreatingBuffer Creating Buffer Objects
+\defgroup CL_ReadWriteBuffer Reading, Writing and Copying Buffer Objects
+\defgroup CL_RetRelMemory Retaining and Releasing Memory Objects
+\defgroup CL_CreatingImage Creating Image Objects
+\defgroup CL_QueryImageFormat Querying List of Supported Image Formats
+\defgroup CL_ReadWriteImage Reading, Writing and Copying Image Objects
+\defgroup CL_CopyingImageBuffer Copying between Image and Buffer Objects
+\defgroup CL_MapUnmap Mapping and Unmapping Memory Objects
+\defgroup CL_MemObjQuery Memory Object Queries
+@}
+
+\addtogroup CL_Programs Programs
+@{
+\defgroup CL_CreatingPrograms Creating Program Objects
+\defgroup CL_Build Building Program Executables
+\defgroup CL_Unloading Unloading the OpenCL Compiler
+\defgroup CL_ProgramQueries Program Object Queries
+@}
+
+\addtogroup CL_Kernels Kernel Objects
+@{
+\defgroup CL_CreateKernel Creating Kernel Objects
+\defgroup CL_SettingArgs Setting Kernel Arguments
+\defgroup CL_KernelQuery Kernel Object Queries
+@}
+
+
+*/
