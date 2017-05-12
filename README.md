@@ -22,7 +22,9 @@ Main OpenCL Components
 Download the git projects with the following commands:
 
     ~/bin/repo init -u https://github.com/RadeonOpenCompute/ROCm-OpenCL-Runtime.git -b amd-master -m opencl.xml
-    ~/bin/repo sync## BUILDING
+    ~/bin/repo sync
+    
+## BUILDING
 
 Use out-of-source CMake build and create separate directory to run CMake.
 
