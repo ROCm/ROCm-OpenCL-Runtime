@@ -1,5 +1,5 @@
 # ROCm-OpenCL-Runtime
-ROCm OpenOpenCL Runtime 
+ROCm OpenCL Runtime 
 
 ## GETTING REPO
 
@@ -10,8 +10,9 @@ Repo is a git wrapper that manages a collection of git repositories. Install thi
 
 ## GETTING THE SOURCE CODE
 
-Main OpenCL Components 
+Main OpenCL Components:
 
+* https://github.com/RadeonOpenCompute/ROCm-OpenCL-Runtime
 * https://github.com/RadeonOpenCompute/ROCm-Device-Libs 
 * https://github.com/RadeonOpenCompute/ROCm-OpenCL-Driver 
 * https://github.com/RadeonOpenCompute/llvm 
