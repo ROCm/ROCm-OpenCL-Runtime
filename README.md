@@ -5,8 +5,8 @@ ROCm OpenOpenCL Runtime
 
 Repo is a git wrapper that manages a collection of git repositories. Install this tool and add it to the command search PATH:
 
-    curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-    chmod a+x ~/bin/repo
+    curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+    chmod a+x ~/bin/repo
 
 ## GETTING THE SOURCE CODE
 
@@ -28,7 +28,7 @@ Use out-of-source CMake build and create separate directory to run CMake.
 
 The following build steps are performed:
 
-    mkdir -p build && cd build
+    mkdir -p build && cd build
     cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
     make
     
