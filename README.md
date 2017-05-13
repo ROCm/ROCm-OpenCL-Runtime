@@ -1,5 +1,12 @@
 # ROCm-OpenCL-Runtime
-ROCm OpenCL Runtime 
+ROCm OpenCL™ Compatible Runtime 
+
+Developer preview Version 2 of the new 
+
+* OpenCL 1.2 compatible language runtime and compiler
+* OpenCL 2.0 compatible kernel language support with OpenCL 1.2 compatible runtime
+* Supports offline ahead of time compilation today; during the Beta phase we will add in-process/in-memory compilation.
+
 
 ## GETTING REPO
 
@@ -10,7 +17,7 @@ Repo is a git wrapper that manages a collection of git repositories. Install thi
 
 ## GETTING THE SOURCE CODE
 
-Main OpenCL Components:
+Main OpenCL™ Compatible Components:
 
 * https://github.com/RadeonOpenCompute/ROCm-OpenCL-Runtime
 * https://github.com/RadeonOpenCompute/ROCm-Device-Libs 
@@ -39,3 +46,4 @@ The following build steps are performed:
 
     LLVM_BIN=./compiler/llvm/bin LD_LIBRARY_PATH=./api/opencl/amdocl clinfo
 
+OpenCL™ is registered Trademark of Apple  
