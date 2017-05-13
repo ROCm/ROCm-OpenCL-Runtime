@@ -1,5 +1,4 @@
-# ROCm-OpenCL-Runtime
-ROCm OpenCL™ Compatible Runtime 
+# ROCm OpenCL™ Compatible Runtime 
 
 Developer preview Version 2 of the new 
 
