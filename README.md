@@ -31,6 +31,10 @@ Download the git projects with the following commands:
     ~/bin/repo init -u https://github.com/RadeonOpenCompute/ROCm-OpenCL-Runtime.git -b amd-master -m opencl.xml
     ~/bin/repo sync
     
+## INSTALL ROCm
+
+Follow the instructions at https://rocm.github.io/install.html to install ROCm.
+
 ## BUILDING
 
 Use out-of-source CMake build and create separate directory to run CMake.
