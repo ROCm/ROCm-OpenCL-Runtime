@@ -231,11 +231,11 @@ aclutUpdateMetadataWithHiddenKernargsNum(aclCompiler* cl, aclBinary* bin, uint32
   char* kernelNames = new char[kernelNamesSize];
   error_code = aclQueryInfo(cl, bin, RT_KERNEL_NAMES, NULL, kernelNames, &kernelNamesSize);
   if (error_code != ACL_SUCCESS) {
-    delete kernelNames;
+    delete[] kernelNames;
     return error_code;
   }
   std::vector<std::string> vKernels = splitSpaceSeparatedString(kernelNames);
-  delete kernelNames;
+  delete[] kernelNames;
   size_t roSize = 0;
   for (auto it = vKernels.begin(); it != vKernels.end(); ++it) {
     std::string symbol = aclutOpenclMangledKernelMetadataName(*it);
