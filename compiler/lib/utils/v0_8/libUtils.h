@@ -359,6 +359,7 @@ inline char* readFile(std::string source_filename, size_t& size)
   if (length != fread(&ptr[offset], 1, length, fp))
   {
     ::free(ptr);
+    ::fclose(fp);
     return NULL;
   }
   ptr[offset + length] = '\0';
@@ -377,6 +378,7 @@ inline bool writeFile(std::string source_filename, const char *source, size_t si
     return EXIT_FAILURE;
   }
   if (!::fwrite(source, size, 1, fp)) {
+    ::fclose(fp);
     return EXIT_FAILURE;
   }
   ::fclose(fp);
