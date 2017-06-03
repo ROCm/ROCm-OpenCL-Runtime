@@ -5,6 +5,7 @@ set(INC_SUFFIX "amdgcn.inc")
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/common)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/libelf)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
+include_directories(${ROCM_OCL_INCLUDES})
 
 add_library(oclrocm OBJECT
   rocprintf.cpp
