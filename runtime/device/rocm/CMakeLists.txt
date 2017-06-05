@@ -1,3 +1,5 @@
+include(bc2h)
+
 set(INC_SUFFIX "amdgcn.inc")
 
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/common)
@@ -30,7 +32,7 @@ foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
   set(symbol "${lib_file_name}_amdgcn")
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${header}
     COMMAND bc2h ${bclib} ${CMAKE_CURRENT_BINARY_DIR}/${header} ${symbol}
-    DEPENDS ${AMDGCN_LIB_TARGET}
+    DEPENDS bc2h ${AMDGCN_LIB_TARGET}
     COMMENT "Generating ${header}"
   )
   set_property(DIRECTORY APPEND PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_CURRENT_BINARY_DIR}/${target}.inc)
