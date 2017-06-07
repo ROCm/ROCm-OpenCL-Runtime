@@ -157,8 +157,10 @@ static const char* OclExtensionsString[] = {"cl_khr_fp64 ",
                                             "cl_khr_mipmap_image ",
                                             "cl_khr_mipmap_image_writes ",
                                             IS_MAINLINE ? "" : "cl_khr_il_program ",
-                                            (IS_LINUX) ? "" : "cl_amd_liquid_flash ",
+                                            "cl_amd_liquid_flash ",
                                             NULL};
+
+static constexpr int AmdVendor = 0x1002;
 
 namespace device {
 class ClBinary;
