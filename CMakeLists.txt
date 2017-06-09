@@ -7,7 +7,15 @@ endif()
 
 project(OpenCL-ROCm)
 
+# Add path for custom modules
+set(CMAKE_MODULE_PATH
+  ${CMAKE_MODULE_PATH}
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules"
+  )
+
 set(LLVM_INCLUDE_TESTS CACHE BOOL OFF)
+set(LLVM_BUILD_TOOLS CACHE BOOL OFF)
 set(LLVM_TARGETS_TO_BUILD "AMDGPU" CACHE STRING "")
 set(LLVM_ENABLE_PROJECTS CACHE STRING "clang")
 set(LLVM_BUILD_GLOBAL_ISEL CACHE BOOL OFF)
@@ -34,11 +42,21 @@ add_subdirectory(compiler/driver)
 
 set(BUILD_HC_LIB CACHE BOOL OFF)
 set(ROCM_DEVICELIB_INCLUDE_TESTS CACHE BOOL OFF)
+set(AMDGCN_TARGETS_LIB_LIST "AMDGCN_LIB_TARGETS")
 add_subdirectory(library/amdgcn)
 
 add_subdirectory(compiler/lib/loaders/elf/utils/libelf)
 
 add_subdirectory(tools/bc2h)
 
+find_package(ROCR REQUIRED)
 add_subdirectory(runtime)
+
+set(OPENCL_INCLUDE_DIRS
+  ${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers
+  ${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers/opencl2.0)
+
 add_subdirectory(api/opencl/amdocl)
+add_subdirectory(api/opencl/khronos/icd)
+
+add_subdirectory(tools/clinfo)
