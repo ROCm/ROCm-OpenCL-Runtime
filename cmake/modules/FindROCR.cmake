@@ -9,7 +9,7 @@ find_path(ROCR_INCLUDE_DIR hsa.h
           PATH_SUFFIXES hsa)
 
 find_library(ROCR_LIBRARY hsa-runtime64
-             HINTS /opt/rocm/lib /opt/rocm/hsa/lib)
+             HINTS /opt/rocm/lib  /opt/rocm/hsa/lib)
 
 include(FindPackageHandleStandardArgs)
 # handle the QUIETLY and REQUIRED arguments and set ROCR_FOUND to TRUE
