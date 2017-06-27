@@ -47,6 +47,6 @@ The following build steps are performed:
     
 ## RUNNING clinfo
 
-    LLVM_BIN=./compiler/llvm/bin LD_LIBRARY_PATH=./api/opencl/amdocl clinfo
+    LLVM_BIN=./compiler/llvm/bin LD_LIBRARY_PATH=./lib clinfo
 
 OpenCL™ is registered Trademark of Apple  
