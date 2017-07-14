@@ -43,11 +43,10 @@ add_subdirectory(compiler/driver)
 set(BUILD_HC_LIB CACHE BOOL OFF)
 set(ROCM_DEVICELIB_INCLUDE_TESTS CACHE BOOL OFF)
 set(AMDGCN_TARGETS_LIB_LIST "AMDGCN_LIB_TARGETS")
+set(AMDGPU_TARGET_TRIPLE "amdgcn-amd-amdhsa-opencl")
 add_subdirectory(library/amdgcn)
 
 add_subdirectory(compiler/lib/loaders/elf/utils/libelf)
-
-add_subdirectory(tools/bc2h)
 
 find_package(ROCR REQUIRED)
 add_subdirectory(runtime)
