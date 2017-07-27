@@ -18,6 +18,10 @@
 #include "CL/cl_dx9_media_sharing.h"
 #endif  //_WIN32
 
+#if defined(_WIN32)
+#include "lf.h"
+#endif
+
 namespace amd {
 
 Context::Context(const std::vector<Device*>& devices, const Info& info)
@@ -75,9 +79,9 @@ Context::~Context() {
 
   std::for_each(devices_.begin(), devices_.end(), std::mem_fun(&Device::release));
 
-#if defined WITH_LIQUID_FLASH
+#if defined(_WIN32)
   lfTerminate();
-#endif // WITH_LIQUID_FLASH
+#endif
 }
 
 int Context::checkProperties(const cl_context_properties* properties, Context::Info* info) {
@@ -257,9 +261,9 @@ int Context::create(const intptr_t* properties) {
       }
     }
   }
-#if defined WITH_LIQUID_FLASH
+#if defined(_WIN32)
   lfInit();
-#endif // WITH_LIQUID_FLASH
+#endif
   return result;
 }
 
