@@ -37,6 +37,12 @@ Follow the instructions at https://rocm.github.io/install.html to install ROCm.
 
 ## BUILDING
 
+Install additional dependencies:
+* OCaml
+* findlib
+* A Python 2 environment or active virtualenv with the Microsoft Z3 package
+* git with subversion support (git svn)
+
 Use out-of-source CMake build and create separate directory to run CMake.
 
 The following build steps are performed:
