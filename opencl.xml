@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
-  <remote  name="RadeonOpenCompute" fetch="https://github.com/RadeonOpenCompute/" />
-  <remote  name="KhronosGroup" fetch="https://github.com/KhronosGroup/" />
+  <remote name="RadeonOpenCompute" fetch="https://github.com/RadeonOpenCompute/"/>
+  <remote name="KhronosGroup" fetch="https://github.com/KhronosGroup/"/>
 
-  <project path="opencl" name="ROCm-OpenCL-Runtime" revision="master" remote="RadeonOpenCompute" />
+  <project path="opencl" name="ROCm-OpenCL-Runtime" revision="master" remote="RadeonOpenCompute"/>
   <project path="opencl/compiler/llvm" name="llvm" revision="amd-common" remote="RadeonOpenCompute"/>
   <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="amd-common" remote="RadeonOpenCompute"/>
   <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="amd-common" remote="RadeonOpenCompute"/>
