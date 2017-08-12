@@ -37,11 +37,14 @@ Follow the instructions at https://rocm.github.io/install.html to install ROCm.
 
 ## BUILDING
 
-Install additional dependencies:
+To install additional dependencies:
+
 * OCaml
 * findlib
 * A Python 2 environment or active virtualenv with the Microsoft Z3 package
 * git with subversion support (git svn)
+
+Run:
 
     sudo apt-get install ocaml ocaml-findlib python-z3 git-svn
 
