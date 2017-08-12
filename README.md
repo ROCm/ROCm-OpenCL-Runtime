@@ -43,6 +43,8 @@ Install additional dependencies:
 * A Python 2 environment or active virtualenv with the Microsoft Z3 package
 * git with subversion support (git svn)
 
+    sudo apt-get install ocaml ocaml-findlib python-z3 git-svn
+
 Use out-of-source CMake build and create separate directory to run CMake.
 
 The following build steps are performed:
