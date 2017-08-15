@@ -3,12 +3,12 @@
   <remote  name="RadeonOpenCompute" fetch="https://github.com/RadeonOpenCompute/" />
   <remote  name="KhronosGroup" fetch="https://github.com/KhronosGroup/" />
 
-  <project path="opencl" name="ROCm-OpenCL-Runtime" revision="amd-master" remote="RadeonOpenCompute" />
-  <project path="opencl/compiler/llvm" name="llvm" revision="amd-common" remote="RadeonOpenCompute"/>
-  <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="amd-common" remote="RadeonOpenCompute"/>
-  <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="amd-common" remote="RadeonOpenCompute"/>
-  <project path="opencl/library/amdgcn" name="ROCm-Device-Libs" revision="master" remote="RadeonOpenCompute"/>
-  <project path="opencl/compiler/driver" name="ROCm-OpenCL-Driver" revision="master" remote="RadeonOpenCompute"/>
+  <project path="opencl" name="ROCm-OpenCL-Runtime" revision="roc-1.6.x" remote="RadeonOpenCompute" />
+  <project path="opencl/compiler/llvm" name="llvm" revision="roc-1.6.x" remote="RadeonOpenCompute"/>
+  <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="roc-1.6.x" remote="RadeonOpenCompute"/>
+  <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="roc-1.6.x" remote="RadeonOpenCompute"/>
+  <project path="opencl/library/amdgcn" name="ROCm-Device-Libs" revision="roc-1.6.x" remote="RadeonOpenCompute"/>
+  <project path="opencl/compiler/driver" name="ROCm-OpenCL-Driver" revision="roc-1.6.x" remote="RadeonOpenCompute"/>
 
-  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" revision="master" remote="KhronosGroup"/>
+  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" revision="6849f617e991e8a46eebf746df43032175f263b3" remote="KhronosGroup"/>
 </manifest>
