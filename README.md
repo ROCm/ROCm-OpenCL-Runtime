@@ -35,6 +35,12 @@ Download the git projects with the following commands:
 
 Follow the instructions at https://rocm.github.io/install.html to install ROCm.
 
+## SETUP OpenCL
+
+Copy the amdocl64.icd file to /etc/OpenCL/vendors
+
+    sudo cp api/opencl/config/amdocl64.icd /etc/OpenCL/vendors/
+
 ## BUILDING
 
 To install additional dependencies:
