@@ -512,15 +512,17 @@ bool Device::init() {
     }
   }
 
-  // Loop through all available devices
-  for (auto device1: Device::devices()) {
-	// Find all agents that can have access to the current device
-    for (auto agent: static_cast<Device*>(device1)->p2pAgents()) {
-      // Find cl_device_id associated with the current agent
-      for (auto device2: Device::devices()) {
-        if (agent.handle == static_cast<Device*>(device2)->getBackendDevice().handle) {
-          // Device2 can have access to device1
-          device2->p2pDevices_.push_back(as_cl(device1));
+  if (0 != Device::numDevices(CL_DEVICE_TYPE_GPU, false)) {
+    // Loop through all available devices
+    for (auto device1: Device::devices()) {
+      // Find all agents that can have access to the current device
+      for (auto agent: static_cast<Device*>(device1)->p2pAgents()) {
+        // Find cl_device_id associated with the current agent
+        for (auto device2: Device::devices()) {
+          if (agent.handle == static_cast<Device*>(device2)->getBackendDevice().handle) {
+            // Device2 can have access to device1
+            device2->p2pDevices_.push_back(as_cl(device1));
+          }
         }
       }
     }
@@ -1089,10 +1091,26 @@ bool Device::populateOCLDeviceConstants() {
 #endif  // !defined(WITH_LIGHTNING_COMPILER)
   }
 
-  if (HSA_STATUS_SUCCESS !=
-      hsa_agent_get_info(_bkendDevice, HSA_AGENT_INFO_WAVEFRONT_SIZE, &info_.wavefrontWidth_)) {
-    return false;
-  }
+  //if (settings().checkExtension(ClAmdDeviceAttributeQuery)) {
+    //info_.simdPerCU_ = deviceInfo_.simdPerCU_;
+    //info_.simdWidth_ = deviceInfo_.simdWidth_;
+    //info_.simdInstructionWidth_ = deviceInfo_.simdInstructionWidth_;
+    if (HSA_STATUS_SUCCESS !=
+        hsa_agent_get_info(_bkendDevice, HSA_AGENT_INFO_WAVEFRONT_SIZE, &info_.wavefrontWidth_)) {
+      return false;
+    }
+    //info_.globalMemChannels_ = palProp.gpuMemoryProperties.performance.vramBusBitWidth / 32;
+    //info_.globalMemChannelBanks_ = 4;
+    //info_.globalMemChannelBankWidth_ = deviceInfo_.memChannelBankWidth_;
+    //info_.localMemSizePerCU_ = deviceInfo_.localMemSizePerCU_;
+    //info_.localMemBanks_ = deviceInfo_.localMemBanks_;
+    info_.gfxipVersion_ = deviceInfo_.gfxipVersion_;
+    //info_.numAsyncQueues_ = numComputeRings;
+    //info_.numRTQueues_ = numExclusiveComputeRings;
+    //info_.numRTCUs_ = palProp.engineProperties[Pal::EngineTypeExclusiveCompute].maxNumDedicatedCu;
+    //info_.threadTraceEnable_ = settings().threadTraceEnable_;
+  //}
+
 
   return true;
 }
