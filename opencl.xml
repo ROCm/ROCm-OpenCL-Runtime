@@ -12,5 +12,5 @@
   <project path="opencl/compiler/llvm/tools/lld" name="lld"/>
   <project path="opencl/library/amdgcn" name="ROCm-Device-Libs"/>
 
-  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" remote="KhronosGroup"/>
+  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" remote="KhronosGroup" revision="6849f617e991e8a46eebf746df43032175f263b3"/>
 </manifest>
