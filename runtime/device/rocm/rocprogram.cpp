@@ -15,7 +15,6 @@
 #include "libraries.amdgcn.inc"
 #else  // !defined(WITH_LIGHTNING_COMPILER)
 #include "roccompilerlib.hpp"
-#include "amd_hsa_code.hpp"
 #endif  // !defined(WITH_LIGHTNING_COMPILER)
 #include "utils/bif_section_labels.hpp"
 
@@ -74,6 +73,9 @@ HSAILProgram::~HSAILProgram() {
   if (hsaExecutable_.handle != 0) {
     hsa_executable_destroy(hsaExecutable_);
   }
+  if (hsaCodeObjectReader_.handle != 0) {
+    hsa_code_object_reader_destroy(hsaCodeObjectReader_);
+  }
   releaseClBinary();
 
 #if defined(WITH_LIGHTNING_COMPILER)
@@ -93,6 +95,7 @@ HSAILProgram::HSAILProgram(roc::NullDevice& device) : Program(device), binaryElf
   binOpts_.dealloc = &::free;
 
   hsaExecutable_.handle = 0;
+  hsaCodeObjectReader_.handle = 0;
 
   hasGlobalStores_ = false;
 
@@ -194,6 +197,7 @@ aclType HSAILProgram::getCompilationStagesFromBinary(std::vector<aclType>& compl
   // Checking llvmir in .llvmir section
   bool containsHsailText = false;
   bool containsBrig = false;
+  bool containsLoaderMap = false;
   bool containsLlvmirText = (type() == TYPE_COMPILED);
   bool containsShaderIsa = (type() == TYPE_EXECUTABLE);
   bool containsOpts = !(compileOptions_.empty() && linkOptions_.empty());
@@ -223,22 +227,23 @@ aclType HSAILProgram::getCompilationStagesFromBinary(std::vector<aclType>& compl
   if (errorCode != ACL_SUCCESS) {
     containsBrig = false;
   }
+  // Checking Loader Map symbol from CG section
+  containsLoaderMap = true;
+  errorCode = g_complibApi._aclQueryInfo(device().compiler(), binaryElf_, RT_CONTAINS_LOADER_MAP,
+                                         NULL, &containsLoaderMap, &boolSize);
+  if (errorCode != ACL_SUCCESS) {
+    containsLoaderMap = false;
+  }
   if (containsBrig) {
     completeStages.push_back(from);
     from = ACL_TYPE_HSAIL_BINARY;
-    // Here we should check that CG stage was done.
-    // Right now there are 2 criterions to check it (besides BRIG itself):
-    // 1. matadata symbols symOpenclKernel for every kernel.
-    // 2. HSAIL text in aclCODEGEN section.
-    // Unfortunately there is no appropriate way in Compiler Lib to check 1.
-    // because kernel names are unknown here, therefore only 2.
-    if (containsHsailText) {
-      completeStages.push_back(from);
-      from = ACL_TYPE_CG;
-    }
   } else if (containsHsailText) {
     completeStages.push_back(from);
     from = ACL_TYPE_HSAIL_TEXT;
+  }
+  if (containsLoaderMap) {
+    completeStages.push_back(from);
+    from = ACL_TYPE_CG;
   }
   errorCode = g_complibApi._aclQueryInfo(device().compiler(), binaryElf_, RT_CONTAINS_ISA, nullptr,
                                          &containsShaderIsa, &boolSize);
@@ -268,25 +273,21 @@ aclType HSAILProgram::getCompilationStagesFromBinary(std::vector<aclType>& compl
       needOptionsCheck = false;
       break;
     case ACL_TYPE_HSAIL_BINARY:
-    case ACL_TYPE_CG:
       // do not check options, if LLVMIR is absent or might be absent or options are absent
-      if (curOptions.oVariables->BinLLVMIR || !containsLlvmirText || !containsOpts) {
+      if (!curOptions.oVariables->BinLLVMIR || !containsLlvmirText || !containsOpts) {
         needOptionsCheck = false;
       }
       break;
+    case ACL_TYPE_CG:
     case ACL_TYPE_ISA:
       // do not check options, if LLVMIR is absent or might be absent or options are absent
-      if (curOptions.oVariables->BinLLVMIR || !containsLlvmirText || !containsOpts) {
+      if (!curOptions.oVariables->BinLLVMIR || !containsLlvmirText || !containsOpts) {
         needOptionsCheck = false;
       }
 #if !defined(WITH_LIGHTNING_COMPILER)
-      if (containsBrig && containsHsailText && curOptions.oVariables->BinHSAIL) {
+      // do not check options, if BRIG is absent or might be absent or LoaderMap is absent
+      if (!curOptions.oVariables->BinCG || !containsBrig || !containsLoaderMap) {
         needOptionsCheck = false;
-        // recompile from prev. stage, if BRIG || HSAIL are absent
-      } else {
-        from = completeStages.back();
-        completeStages.pop_back();
-        needOptionsCheck = true;
       }
 #endif
       break;
@@ -794,48 +795,6 @@ bool HSAILProgram::linkImpl_LC(amd::option::Options* options) {
 }
 
 bool HSAILProgram::setKernels_LC(amd::option::Options* options, void* binary, size_t binSize) {
-  hsa_agent_t agent = dev().getBackendDevice();
-  hsa_status_t status;
-
-  status = hsa_executable_create_alt(HSA_PROFILE_FULL, HSA_DEFAULT_FLOAT_ROUNDING_MODE_DEFAULT,
-                                     nullptr, &hsaExecutable_);
-  if (status != HSA_STATUS_SUCCESS) {
-    buildLog_ += "Error: Executable for AMD HSA Code Object isn't created: ";
-    buildLog_ += hsa_strerror(status);
-    buildLog_ += "\n";
-    return false;
-  }
-
-  // Load the code object.
-  hsa_code_object_reader_t codeObjectReader;
-  status = hsa_code_object_reader_create_from_memory(binary, binSize, &codeObjectReader);
-  if (status != HSA_STATUS_SUCCESS) {
-    buildLog_ += "Error: AMD HSA Code Object Reader create failed: ";
-    buildLog_ += hsa_strerror(status);
-    buildLog_ += "\n";
-    return false;
-  }
-
-  status = hsa_executable_load_agent_code_object(hsaExecutable_, agent, codeObjectReader, nullptr,
-                                                 nullptr);
-  if (status != HSA_STATUS_SUCCESS) {
-    buildLog_ += "Error: AMD HSA Code Object loading failed: ";
-    buildLog_ += hsa_strerror(status);
-    buildLog_ += "\n";
-    return false;
-  }
-
-  hsa_code_object_reader_destroy(codeObjectReader);
-
-  // Freeze the executable.
-  status = hsa_executable_freeze(hsaExecutable_, nullptr);
-  if (status != HSA_STATUS_SUCCESS) {
-    buildLog_ += "Error: Freezing the executable failed: ";
-    buildLog_ += hsa_strerror(status);
-    buildLog_ += "\n";
-    return false;
-  }
-
   size_t progvarsTotalSize = 0;
   size_t dynamicSize = 0;
   size_t progvarsWriteSize = 0;
@@ -920,6 +879,50 @@ bool HSAILProgram::setKernels_LC(amd::option::Options* options, void* binary, si
   setGlobalVariableTotalSize(progvarsTotalSize);
 
   saveBinaryAndSetType(TYPE_EXECUTABLE, binary, binSize);
+
+  //Load the stored copy of the ELF binary.
+  binary_t stored_binary = this->binary();
+  binary = const_cast<void*>(stored_binary.first);
+  binSize = stored_binary.second;
+
+  hsa_agent_t agent = dev().getBackendDevice();
+  hsa_status_t status;
+
+  status = hsa_executable_create_alt(HSA_PROFILE_FULL, HSA_DEFAULT_FLOAT_ROUNDING_MODE_DEFAULT,
+                                     nullptr, &hsaExecutable_);
+  if (status != HSA_STATUS_SUCCESS) {
+    buildLog_ += "Error: Executable for AMD HSA Code Object isn't created: ";
+    buildLog_ += hsa_strerror(status);
+    buildLog_ += "\n";
+    return false;
+  }
+
+  // Load the code object.
+  status = hsa_code_object_reader_create_from_memory(binary, binSize, &hsaCodeObjectReader_);
+  if (status != HSA_STATUS_SUCCESS) {
+    buildLog_ += "Error: AMD HSA Code Object Reader create failed: ";
+    buildLog_ += hsa_strerror(status);
+    buildLog_ += "\n";
+    return false;
+  }
+
+  status = hsa_executable_load_agent_code_object(hsaExecutable_, agent, hsaCodeObjectReader_, nullptr,
+                                                 nullptr);
+  if (status != HSA_STATUS_SUCCESS) {
+    buildLog_ += "Error: AMD HSA Code Object loading failed: ";
+    buildLog_ += hsa_strerror(status);
+    buildLog_ += "\n";
+    return false;
+  }
+
+  // Freeze the executable.
+  status = hsa_executable_freeze(hsaExecutable_, nullptr);
+  if (status != HSA_STATUS_SUCCESS) {
+    buildLog_ += "Error: Freezing the executable failed: ";
+    buildLog_ += hsa_strerror(status);
+    buildLog_ += "\n";
+    return false;
+  }
 
   // Get the list of kernels
   std::vector<std::string> kernelNameList;
@@ -1089,20 +1092,20 @@ bool HSAILProgram::linkImpl(amd::option::Options* options) {
   }
 
 #if !defined(WITH_LIGHTNING_COMPILER)
-  hsa_agent_t hsaDevice = dev().getBackendDevice();
-
-  std::string fin_options(options->origOptionStr);
-  // Append an option so that we can selectively enable a SCOption on CZ
-  // whenever IOMMUv2 is enabled.
-  if (dev().isFineGrainedSystem(true)) {
-    fin_options.append(" -sc-xnack-iommu");
-  }
-  errorCode = aclCompile(dev().compiler(), binaryElf_, fin_options.c_str(), ACL_TYPE_CG,
-                         ACL_TYPE_ISA, logFunction);
-  buildLog_ += aclGetCompilerLog(dev().compiler());
-  if (errorCode != ACL_SUCCESS) {
-    buildLog_ += "Error: BRIG finalization to ISA failed.\n";
-    return false;
+  if (finalize) {
+    std::string fin_options(options->origOptionStr);
+    // Append an option so that we can selectively enable a SCOption on CZ
+    // whenever IOMMUv2 is enabled.
+    if (dev().isFineGrainedSystem(true)) {
+      fin_options.append(" -sc-xnack-iommu");
+    }
+    errorCode = aclCompile(dev().compiler(), binaryElf_, fin_options.c_str(), ACL_TYPE_CG,
+                           ACL_TYPE_ISA, logFunction);
+    buildLog_ += aclGetCompilerLog(dev().compiler());
+    if (errorCode != ACL_SUCCESS) {
+      buildLog_ += "Error: BRIG finalization to ISA failed.\n";
+      return false;
+    }
   }
   size_t secSize;
   void* data =
@@ -1132,6 +1135,7 @@ bool HSAILProgram::linkImpl(amd::option::Options* options) {
     return false;
   }
 
+  hsa_agent_t hsaDevice = dev().getBackendDevice();
   status = hsa_executable_load_agent_code_object(hsaExecutable_, hsaDevice, codeObjectReader,
                                                  nullptr, nullptr);
   if (status != HSA_STATUS_SUCCESS) {

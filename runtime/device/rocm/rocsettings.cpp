@@ -22,7 +22,9 @@ Settings::Settings() {
   enableLocalMemory_ = HSA_LOCAL_MEMORY_ENABLE;
   enableImageHandle_ = true;
 
-  maxWorkGroupSize_ = 256;
+  maxWorkGroupSize_ = 1024;
+  preferredWorkGroupSize_ = 256;
+
   maxWorkGroupSize2DX_ = 16;
   maxWorkGroupSize2DY_ = 16;
   maxWorkGroupSize3DX_ = 4;
@@ -99,6 +101,8 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
   if (MesaInterop::Supported()) {
     enableExtension(ClKhrGlSharing);
   }
+  // Enable platform extension
+  enableExtension(ClAmdDeviceAttributeQuery);
 
   // Enable KHR double precision extension
   enableExtension(ClKhrFp64);
@@ -129,7 +133,7 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
 void Settings::override() {
   // Limit reported workgroup size
   if (GPU_MAX_WORKGROUP_SIZE != 0) {
-    maxWorkGroupSize_ = GPU_MAX_WORKGROUP_SIZE;
+    preferredWorkGroupSize_ = GPU_MAX_WORKGROUP_SIZE;
   }
 
   if (!flagIsDefault(GPU_MAX_COMMAND_QUEUES)) {
