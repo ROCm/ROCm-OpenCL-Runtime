@@ -23,6 +23,7 @@
 typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
 typedef llvm::AMDGPU::HSAMD::Kernel::Metadata KernelMD;
 typedef llvm::AMDGPU::HSAMD::Kernel::Arg::Metadata KernelArgMD;
+
 #endif  // defined(WITH_LIGHTNING_COMPILER)
 
 //! \namespace roc HSA Device Implementation
@@ -155,7 +156,8 @@ class HSAILProgram : public device::Program {
   bool hasGlobalStores_;      //!< program has writable program scope variables
 
   /* HSA executable */
-  hsa_executable_t hsaExecutable_;      //!< Handle to HSA executable
+  hsa_executable_t hsaExecutable_;               //!< Handle to HSA executable
+  hsa_code_object_reader_t hsaCodeObjectReader_; //!< Handle to HSA code reader
 
 #if defined(WITH_LIGHTNING_COMPILER)
   CodeObjectMD* metadata_;  //!< Runtime metadata
