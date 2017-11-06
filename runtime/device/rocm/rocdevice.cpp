@@ -37,6 +37,7 @@
 #endif  // WITHOUT_HSA_BACKEND
 
 #define OPENCL_VERSION_STR XSTR(OPENCL_MAJOR) "." XSTR(OPENCL_MINOR)
+#define OPENCL_C_VERSION_STR XSTR(OPENCL_C_MAJOR) "." XSTR(OPENCL_C_MINOR)
 
 #ifndef WITHOUT_HSA_BACKEND
 namespace device {
@@ -111,7 +112,8 @@ bool NullDevice::create(const AMDDeviceInfo& deviceInfo) {
   info_.extensions_ = getExtensionString();
   info_.maxWorkGroupSize_ = hsaSettings->maxWorkGroupSize_;
   ::strcpy(info_.vendor_, "Advanced Micro Devices, Inc.");
-  info_.oclcVersion_ = "OpenCL C " IF(IS_LIGHTNING, OPENCL_VERSION_STR, "1.2") " ";
+  info_.oclcVersion_ = "OpenCL C " OPENCL_C_VERSION_STR " ";
+  info_.spirVersions_ = "";
   strcpy(info_.driverVersion_, "1.0 Provisional (hsa)");
   info_.version_ = "OpenCL " OPENCL_VERSION_STR " ";
   return true;
@@ -129,6 +131,7 @@ Device::Device(hsa_agent_t bkendDevice)
     , xferWrite_(nullptr)
     , pro_device_(nullptr)
     , pro_ena_(false)
+    , freeMem_(0)
     , numOfVgpus_(0) {
   group_segment_.handle = 0;
   system_segment_.handle = 0;
@@ -887,6 +890,8 @@ bool Device::populateOCLDeviceConstants() {
     }
   }
 
+  freeMem_ = info_.globalMemSize_;
+
   // Make sure the max allocation size is not larger than the available
   // memory size.
   info_.maxMemAllocSize_ = std::min(info_.maxMemAllocSize_, info_.globalMemSize_);
@@ -916,6 +921,7 @@ bool Device::populateOCLDeviceConstants() {
   info_.maxWorkItemSizes_[0] = std::min(max_workgroup_size[0], max_work_item_size);
   info_.maxWorkItemSizes_[1] = std::min(max_workgroup_size[1], max_work_item_size);
   info_.maxWorkItemSizes_[2] = std::min(max_workgroup_size[2], max_work_item_size);
+  info_.preferredWorkGroupSize_ = settings().preferredWorkGroupSize_;
 
   info_.nativeVectorWidthChar_ = info_.preferredVectorWidthChar_ = 4;
   info_.nativeVectorWidthShort_ = info_.preferredVectorWidthShort_ = 2;
@@ -932,6 +938,7 @@ bool Device::populateOCLDeviceConstants() {
   info_.minDataTypeAlignSize_ = sizeof(cl_long16);
 
   info_.maxConstantArgs_ = 8;
+  info_.preferredConstantBufferSize_ = 16 * Ki;
   info_.maxConstantBufferSize_ = info_.maxMemAllocSize_;
   info_.localMemType_ = CL_LOCAL;
   info_.errorCorrectionSupport_ = false;
@@ -947,7 +954,8 @@ bool Device::populateOCLDeviceConstants() {
   info_.addressBits_ = LP64_SWITCH(32, 64);
   info_.maxSamplers_ = 16;
   info_.bufferFromImageSupport_ = CL_FALSE;
-  info_.oclcVersion_ = "OpenCL C " IF(IS_LIGHTNING, OPENCL_VERSION_STR, "1.2") " ";
+  info_.oclcVersion_ = "OpenCL C " OPENCL_C_VERSION_STR " ";
+  info_.spirVersions_ = "";
 
   uint16_t major, minor;
   if (hsa_agent_get_info(_bkendDevice, HSA_AGENT_INFO_VERSION_MAJOR, &major) !=
@@ -957,7 +965,7 @@ bool Device::populateOCLDeviceConstants() {
     return false;
   }
   std::stringstream ss;
-  ss << major << "." << minor << " (HSA," IF(IS_LIGHTNING, "LC", "HSAIL") ")";
+  ss << AMD_BUILD_STRING " (HSA" << major << "." << minor << "," IF(IS_LIGHTNING, "LC", "HSAIL") ")";
 
   strcpy(info_.driverVersion_, ss.str().c_str());
   info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"1.2" " ";
@@ -1091,26 +1099,37 @@ bool Device::populateOCLDeviceConstants() {
 #endif  // !defined(WITH_LIGHTNING_COMPILER)
   }
 
-  //if (settings().checkExtension(ClAmdDeviceAttributeQuery)) {
-    //info_.simdPerCU_ = deviceInfo_.simdPerCU_;
-    //info_.simdWidth_ = deviceInfo_.simdWidth_;
-    //info_.simdInstructionWidth_ = deviceInfo_.simdInstructionWidth_;
+  if (settings().checkExtension(ClAmdDeviceAttributeQuery)) {
+    info_.simdPerCU_ = deviceInfo_.simdPerCU_;
+    info_.simdWidth_ = deviceInfo_.simdWidth_;
+    info_.simdInstructionWidth_ = deviceInfo_.simdInstructionWidth_;
     if (HSA_STATUS_SUCCESS !=
         hsa_agent_get_info(_bkendDevice, HSA_AGENT_INFO_WAVEFRONT_SIZE, &info_.wavefrontWidth_)) {
       return false;
     }
-    //info_.globalMemChannels_ = palProp.gpuMemoryProperties.performance.vramBusBitWidth / 32;
-    //info_.globalMemChannelBanks_ = 4;
-    //info_.globalMemChannelBankWidth_ = deviceInfo_.memChannelBankWidth_;
-    //info_.localMemSizePerCU_ = deviceInfo_.localMemSizePerCU_;
-    //info_.localMemBanks_ = deviceInfo_.localMemBanks_;
+    if (HSA_STATUS_SUCCESS !=
+        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MEMORY_WIDTH, &info_.globalMemChannels_)) {
+      return false;
+    }
+    info_.globalMemChannels_ /= 32;
+    info_.globalMemChannelBanks_ = 4;
+    info_.globalMemChannelBankWidth_ = deviceInfo_.memChannelBankWidth_;
+    info_.localMemSizePerCU_ = deviceInfo_.localMemSizePerCU_;
+    info_.localMemBanks_ = deviceInfo_.localMemBanks_;
     info_.gfxipVersion_ = deviceInfo_.gfxipVersion_;
-    //info_.numAsyncQueues_ = numComputeRings;
-    //info_.numRTQueues_ = numExclusiveComputeRings;
-    //info_.numRTCUs_ = palProp.engineProperties[Pal::EngineTypeExclusiveCompute].maxNumDedicatedCu;
-    //info_.threadTraceEnable_ = settings().threadTraceEnable_;
-  //}
+    info_.numAsyncQueues_ = kMaxAsyncQueues;
+    info_.numRTQueues_ = info_.numAsyncQueues_;
+    if (HSA_STATUS_SUCCESS !=
+        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_COMPUTE_UNIT_COUNT, &info_.numRTCUs_)) {
+      return false;
+    }
+    //TODO: set to true once thread trace support is available
+    info_.threadTraceEnable_ = false;
+  }
 
+  info_.maxPipePacketSize_ = info_.maxMemAllocSize_;
+  info_.maxPipeActiveReservations_ = 16;
+  info_.maxPipeArgs_ = 16;
 
   return true;
 }
@@ -1134,7 +1153,18 @@ device::VirtualDevice* Device::createVirtualDevice(amd::CommandQueue* queue) {
   return virtualDevice;
 }
 
-bool Device::globalFreeMemory(size_t* freeMemory) const { return false; }
+bool Device::globalFreeMemory(size_t* freeMemory) const {
+  const uint TotalFreeMemory = 0;
+  const uint LargestFreeBlock = 1;
+
+  freeMemory[TotalFreeMemory] = freeMem_ / Ki;
+
+  // since there is no memory heap on ROCm, the biggest free block is
+  // equal to total free local memory
+  freeMemory[LargestFreeBlock] = freeMemory[TotalFreeMemory];
+
+  return true;
+}
 
 bool Device::bindExternalDevice(uint flags, void* const gfxDevice[], void* gfxContext,
                                 bool validateOnly) {
@@ -1291,6 +1321,14 @@ device::Memory* Device::createMemory(amd::Memory& owner) const {
     return nullptr;
   }
 
+  // Initialize if the memory is a pipe object
+  if (owner.getType() == CL_MEM_OBJECT_PIPE) {
+    // Pipe initialize in order read_idx, write_idx, end_idx. Refer clk_pipe_t structure.
+    // Init with 3 DWORDS for 32bit addressing and 6 DWORDS for 64bit
+    size_t pipeInit[3] = { 0, 0, owner.asPipe()->getMaxNumPackets() };
+    xferMgr().writeBuffer((void *)pipeInit, *memory, amd::Coord3D(0), amd::Coord3D(sizeof(pipeInit)));
+  }
+
   // Transfer data only if OCL context has one device.
   // Cache coherency layer will update data for multiple devices
   if (!memory->isHostMemDirectAccess() && owner.asImage() && (owner.parent() == nullptr) &&
@@ -1378,13 +1416,6 @@ void* Device::deviceLocalAlloc(size_t size) const {
     return nullptr;
   }
 
-  stat = hsa_memory_assign_agent(ptr, _bkendDevice, HSA_ACCESS_PERMISSION_RW);
-  if (stat != HSA_STATUS_SUCCESS) {
-    LogError("Fail assigning local memory to agent");
-    memFree(ptr, size);
-    return nullptr;
-  }
-
   if (p2pAgents().size() > 0) {
     stat = hsa_amd_agents_allow_access(p2pAgents().size(), p2pAgents().data(), nullptr, ptr);
     if (stat != HSA_STATUS_SUCCESS) {
@@ -1401,6 +1432,15 @@ void Device::memFree(void* ptr, size_t size) const {
   hsa_status_t stat = hsa_amd_memory_pool_free(ptr);
   if (stat != HSA_STATUS_SUCCESS) {
     LogError("Fail freeing local memory");
+  }
+}
+
+void Device::updateFreeMemory(size_t size, bool free) {
+  if (free) {
+    freeMem_ += size;
+  }
+  else {
+    freeMem_ -= size;
   }
 }
 

@@ -4,18 +4,18 @@
 #ifndef _CL_UTILS_TARGET_MAPPINGS_AMDIL_0_8_H_
 #define _CL_UTILS_TARGET_MAPPINGS_AMDIL_0_8_H_
 
-#include "inc/asic_reg/evergreen_id.h"
-#include "inc/asic_reg/r700id.h"
-#include "inc/asic_reg/tn_id.h"
-#include "inc/asic_reg/sumo_id.h"
-#include "inc/asic_reg/northernisland_id.h"
-#include "inc/asic_reg/si_id.h"
-#include "inc/asic_reg/kv_id.h"
-#include "inc/asic_reg/ci_id.h"
-#include "inc/asic_reg/vi_id.h"
-#include "inc/asic_reg/cz_id.h"
-#include "inc/asic_reg/ai_id.h"
-#include "inc/asic_reg/atiid.h"
+#include "evergreen_id.h"
+#include "r700id.h"
+#include "tn_id.h"
+#include "sumo_id.h"
+#include "northernisland_id.h"
+#include "si_id.h"
+#include "kv_id.h"
+#include "ci_id.h"
+#include "vi_id.h"
+#include "cz_id.h"
+#include "ai_id.h"
+#include "atiid.h"
 
 static const TargetMapping AMDILTargetMapping_0_8[] = {
   UnknownTarget,
@@ -102,8 +102,10 @@ static const TargetMapping AMDILTargetMapping_0_8[] = {
   { "CI", "Bonaire",    "bonaire", amd::GPU_Library_CI,        CI_BONAIRE_M_A1,         F_SI_BASE, true, true, FAMILY_CI },
   { "VI", "Fiji",       "fiji",    amd::GPU_Library_CI,        VI_FIJI_P_A0,            F_SI_BASE, true,  true, FAMILY_VI },
   { "CZ", "Stoney",     "stoney",  amd::GPU_Library_CI,        STONEY_A0,               F_SI_BASE, true, true, FAMILY_CZ },
-  { "VI", "Baffin",     "baffin",  amd::GPU_Library_CI,        VI_BAFFIN_M_A0,          F_SI_BASE, true,  true, FAMILY_VI },
-  { "VI", "Ellesmere",  "ellesmere", amd::GPU_Library_CI,      VI_ELLESMERE_P_A0,       F_SI_BASE, true,  true, FAMILY_VI },
+  { "VI", "Baffin",     "baffin",  amd::GPU_Library_CI,        VI_BAFFIN_M_A0,          F_SI_BASE, true, false, FAMILY_VI },
+  { "VI", "Baffin",     "baffin",  amd::GPU_Library_CI,        VI_BAFFIN_M_A1,          F_SI_BASE, true,  true, FAMILY_VI },
+  { "VI", "Ellesmere",  "ellesmere", amd::GPU_Library_CI,      VI_ELLESMERE_P_A0,       F_SI_BASE, true, false, FAMILY_VI },
+  { "VI", "Ellesmere",  "ellesmere", amd::GPU_Library_CI,      VI_ELLESMERE_P_A1,       F_SI_BASE, true,  true, FAMILY_VI },
 #ifndef BRAHMA
   { "VI", "gfx804",     "gfx804",    amd::GPU_Library_CI,      VI_LEXA_V_A0,            F_SI_BASE, true,  true, FAMILY_VI },
 #else

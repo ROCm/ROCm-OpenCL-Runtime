@@ -17,12 +17,13 @@
 #include "rocdevice.hpp"
 
 #if defined(WITH_LIGHTNING_COMPILER)
-#include "llvm/Support/AMDGPUCodeObjectMetadata.h"
 #include "driver/AmdCompiler.h"
+#include "llvm/Support/AMDGPUMetadata.h"
 
-typedef llvm::AMDGPU::CodeObject::Metadata CodeObjectMD;
-typedef llvm::AMDGPU::CodeObject::Kernel::Metadata KernelMD;
-typedef llvm::AMDGPU::CodeObject::Kernel::Arg::Metadata KernelArgMD;
+typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
+typedef llvm::AMDGPU::HSAMD::Kernel::Metadata KernelMD;
+typedef llvm::AMDGPU::HSAMD::Kernel::Arg::Metadata KernelArgMD;
+
 #endif  // defined(WITH_LIGHTNING_COMPILER)
 
 //! \namespace roc HSA Device Implementation
@@ -155,7 +156,8 @@ class HSAILProgram : public device::Program {
   bool hasGlobalStores_;      //!< program has writable program scope variables
 
   /* HSA executable */
-  hsa_executable_t hsaExecutable_;      //!< Handle to HSA executable
+  hsa_executable_t hsaExecutable_;               //!< Handle to HSA executable
+  hsa_code_object_reader_t hsaCodeObjectReader_; //!< Handle to HSA code reader
 
 #if defined(WITH_LIGHTNING_COMPILER)
   CodeObjectMD* metadata_;  //!< Runtime metadata

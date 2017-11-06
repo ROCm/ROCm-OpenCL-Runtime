@@ -31,6 +31,7 @@ enum OptionType {
     OT_INT32,
     OT_UINT32,
     OT_CSTRING,
+    OT_UCHAR,
     OT_MASK = 0x3f
 };
 
@@ -91,6 +92,7 @@ typedef bool           OT_BOOL_t;
 typedef int32_t        OT_INT32_t;
 typedef uint32_t       OT_UINT32_t;
 typedef const char*    OT_CSTRING_t;
+typedef unsigned char  OT_UCHAR_t;
 
 // This must be a POD
 struct OptionDescriptor {
@@ -179,19 +181,21 @@ enum DumpFlags {
     DUMP_ALL           = 0x00007FFF    // Everything
 };
 
-enum OptLevelFlags {
-  OPT_O0       = 0, // No optimization setting.
-  OPT_O1       = 1,
-  OPT_O2       = 2,
-  OPT_O3       = 3,
-  OPT_O4       = 4,
-  OPT_OS       = 5,
-  OPT_Error    = 6, // Invalid optimization set
+enum OptLevelFlags : unsigned char {
+  OPT_O0       = '0', // No optimization setting.
+  OPT_O1       = '1',
+  OPT_O2       = '2',
+  OPT_O3       = '3',
+  OPT_O4       = '4',
+  OPT_O5       = '5',
+  OPT_OG       = 'g', // g ASCII
+  OPT_OS       = 's', // s ASCII
+  OPT_Error    = 0, // Invalid optimization set
   /** Canary Value that guards against enum changes
    * @warning This value cannot be changed without updating the appropriate
    * tests and should NEVER be decreased.
    */
-  optLast     = 7
+  optLast     = 117
 };
 
 class Options {
