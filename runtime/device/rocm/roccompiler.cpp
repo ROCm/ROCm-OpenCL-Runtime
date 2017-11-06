@@ -71,11 +71,11 @@ bool HSAILProgram::compileImpl_LC(const std::string& sourceCode,
   }
 
   // Set the options for the compiler
+  // Some options are set in Clang AMDGPUToolChain (like -m64)
   std::ostringstream ostrstr;
   std::copy(options->clangOptions.begin(), options->clangOptions.end(),
             std::ostream_iterator<std::string>(ostrstr, " "));
 
-  ostrstr << " -m" << sizeof(void*) * 8;
   std::string driverOptions(ostrstr.str());
 
   const char* xLang = options->oVariables->XLang;
@@ -100,7 +100,7 @@ bool HSAILProgram::compileImpl_LC(const std::string& sourceCode,
   driverOptions.append(options->llvmOptions);
 
   // Set whole program mode
-  driverOptions.append(" -mllvm -amdgpu-early-inline-all");
+  driverOptions.append(" -mllvm -amdgpu-early-inline-all -mllvm -amdgpu-prelink");
 
   driverOptions.append(preprocessorOptions(options));
 
@@ -367,10 +367,14 @@ static void checkLLVM_BIN() {
   if (llvmBin_.empty()) {
     Dl_info info;
     if (dladdr((const void*)&amd::Device::init, &info)) {
-      llvmBin_ = dirname(strdup(info.dli_fname));
-      size_t pos = llvmBin_.rfind("lib");
-      if (pos != std::string::npos) {
-        llvmBin_.replace(pos, 3, "bin");
+      char* str = strdup(info.dli_fname);
+      if (str) {
+        llvmBin_ = dirname(str);
+        free(str);
+        size_t pos = llvmBin_.rfind("lib");
+        if (pos != std::string::npos) {
+          llvmBin_.replace(pos, 3, "bin");
+        }
       }
     }
   }
