@@ -116,7 +116,11 @@ RUNTIME_ENTRY(cl_int, clGetPlatformInfo,
           "cl_khr_d3d11_sharing "
           "cl_khr_dx9_media_sharing "
 #endif  //_WIN32
-          "cl_amd_event_callback cl_amd_offline_devices ";
+          "cl_amd_event_callback "
+#if !defined(WITH_LIGHTNING_COMPILER)
+          "cl_amd_offline_devices "
+#endif // defined(WITH_LIGHTNING_COMPILER)
+          ;
       break;
     case CL_PLATFORM_ICD_SUFFIX_KHR:
       value = "AMD";
@@ -244,7 +248,9 @@ RUNTIME_ENTRY(cl_int, clGetDeviceInfo,
       CASE(CL_DEVICE_VENDOR_ID, vendorId_);
       CASE(CL_DEVICE_MAX_COMPUTE_UNITS, maxComputeUnits_);
       CASE(CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, maxWorkItemDimensions_);
-      CASE(CL_DEVICE_MAX_WORK_GROUP_SIZE, maxWorkGroupSize_);
+      CASE(CL_DEVICE_MAX_WORK_GROUP_SIZE, preferredWorkGroupSize_);
+      CASE(CL_DEVICE_PREFERRED_WORK_GROUP_SIZE_AMD, preferredWorkGroupSize_);
+      CASE(CL_DEVICE_MAX_WORK_GROUP_SIZE_AMD, maxWorkGroupSize_);
       CASE(CL_DEVICE_MAX_WORK_ITEM_SIZES, maxWorkItemSizes_);
       CASE(CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR, preferredVectorWidthChar_);
       CASE(CL_DEVICE_PREFERRED_VECTOR_WIDTH_SHORT, preferredVectorWidthShort_);
@@ -284,6 +290,7 @@ RUNTIME_ENTRY(cl_int, clGetDeviceInfo,
       CASE(CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, globalMemCacheSize_);
       CASE(CL_DEVICE_GLOBAL_MEM_SIZE, globalMemSize_);
       CASE(CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE, maxConstantBufferSize_);
+      CASE(CL_DEVICE_PREFERRED_CONSTANT_BUFFER_SIZE_AMD, preferredConstantBufferSize_);
       CASE(CL_DEVICE_MAX_CONSTANT_ARGS, maxConstantArgs_);
       CASE(CL_DEVICE_LOCAL_MEM_TYPE, localMemType_);
       CASE(CL_DEVICE_LOCAL_MEM_SIZE, localMemSize_);

@@ -29,17 +29,6 @@
 
 namespace amd {
 
-#ifdef __linux__
-
-static void __runtime_exit() __attribute__((destructor(102)));
-static void __runtime_exit() {
-  if (ENABLE_CAL_SHUTDOWN) {
-    Runtime::tearDown();
-  }
-}
-
-#endif
-
 volatile bool Runtime::initialized_ = false;
 
 bool Runtime::init() {
@@ -85,7 +74,14 @@ void Runtime::tearDown() {
   Device::tearDown();
   option::teardown();
   Flag::tearDown();
+  initialized_ = false;
 }
+
+class RuntimeTearDown : public amd::HeapObject {
+public:
+  RuntimeTearDown() {}
+  ~RuntimeTearDown() { /*Runtime::tearDown();*/ }
+} runtime_tear_down;
 
 uint ReferenceCountedObject::retain() { return ++make_atomic(referenceCount_); }
 
@@ -122,9 +118,6 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 #endif  // DEBUG
       break;
     case DLL_PROCESS_DETACH:
-      if (!reserved || ENABLE_CAL_SHUTDOWN) {
-        Runtime::tearDown();
-      }
       break;
     case DLL_THREAD_DETACH: {
       amd::Thread* thread = amd::Thread::current();

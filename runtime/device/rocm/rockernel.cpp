@@ -13,10 +13,10 @@ namespace roc {
 
 #if defined(WITH_LIGHTNING_COMPILER)
 
-using llvm::AMDGPU::CodeObject::AccessQualifier;
-using llvm::AMDGPU::CodeObject::AddressSpaceQualifier;
-using llvm::AMDGPU::CodeObject::ValueKind;
-using llvm::AMDGPU::CodeObject::ValueType;
+using llvm::AMDGPU::HSAMD::AccessQualifier;
+using llvm::AMDGPU::HSAMD::AddressSpaceQualifier;
+using llvm::AMDGPU::HSAMD::ValueKind;
+using llvm::AMDGPU::HSAMD::ValueType;
 
 static inline ROC_ARG_TYPE GetKernelArgType(const KernelArgMD& lcArg) {
   switch (lcArg.mValueKind) {
@@ -707,8 +707,8 @@ bool Kernel::init_LC() {
 
   /// TODO: Are there any other fields that are getting queried from akc?
   /// If so, code properties metadata should be used instead.
-  workGroupInfo_.usedSGPRs_ = kernelMD->mCodeProps.mWavefrontNumSGPRs;
-  workGroupInfo_.usedVGPRs_ = kernelMD->mCodeProps.mWorkitemNumVGPRs;
+  workGroupInfo_.usedSGPRs_ = kernelMD->mCodeProps.mNumSGPRs;
+  workGroupInfo_.usedVGPRs_ = kernelMD->mCodeProps.mNumVGPRs;
 
   workGroupInfo_.usedStackSize_ = 0;
 
@@ -720,7 +720,7 @@ bool Kernel::init_LC() {
     workGroupInfo_.size_ = workGroupInfo_.compileSize_[0] * workGroupInfo_.compileSize_[1] *
         workGroupInfo_.compileSize_[2];
   } else {
-    workGroupInfo_.size_ = program_->dev().info().maxWorkGroupSize_;
+    workGroupInfo_.size_ = program_->dev().info().preferredWorkGroupSize_;
   }
 
   initPrintf_LC(programMD->mPrintf);
@@ -807,7 +807,7 @@ bool Kernel::init() {
     workGroupInfo_.size_ = workGroupInfo_.compileSize_[0] * workGroupInfo_.compileSize_[1] *
         workGroupInfo_.compileSize_[2];
   } else {
-    workGroupInfo_.size_ = program_->dev().info().maxWorkGroupSize_;
+    workGroupInfo_.size_ = program_->dev().info().preferredWorkGroupSize_;
   }
 
   // Pull out printf metadata from the ELF
