@@ -130,10 +130,10 @@ getDefault2(int OptDescTableIx, int64_t& idefault2, const char*& sdefault2)
         break;
 
     case OID_OptLevel:
-        idefault2 = 3;
+        idefault2 = amd::option::OPT_O3;
         break;
 
-   case OID_OptUseNative:
+    case OID_OptUseNative:
         sdefault2 = "all";
         break;
 
@@ -159,7 +159,7 @@ setAliasOptionVariable (int OptDescTableIx, Options& Opts,
         od = &OptDescTable[OID_OptLevel];
         assert ((IValue > 0) &&
                 "Internal Error: -cl-opt-disable is present, but with wrong value");
-        if (!setOptionVariable (od, oVars, (int64_t)0, NULL)) {
+        if (!setOptionVariable (od, oVars, (int64_t)amd::option::OPT_O0, NULL)) {
             return false;
         }
         return true;
@@ -287,6 +287,8 @@ ShowOptionsHelp(const char* helpValue, Options& Opts)
         case OT_UINT32:
             pntVal = "<number>";
             break;
+        case OT_UCHAR:
+            pntVal = "<0-9 | a-z>";
         default:
             break;
         }
@@ -427,6 +429,10 @@ setOptionVariable (OptionDescriptor* oDesc, OptionVariables* oVars,
         OT_CSTRING_t* o = reinterpret_cast<OT_CSTRING_t*>(addr);
         *o = static_cast<OT_CSTRING_t>(SValue);
     }
+    else if (OPTION_type(oDesc) == OT_UCHAR) {
+        OT_UCHAR_t* o = reinterpret_cast<OT_UCHAR_t*>(addr);
+        *o = static_cast<OT_UCHAR_t>(IValue);
+    }
     else {
         return false;
     }
@@ -452,6 +458,11 @@ setOptionVariable (OptionDescriptor* oDesc, OptionVariables* srcOVars,
     else if (OPTION_type(oDesc) == OT_UINT32) {
         OT_UINT32_t* src = reinterpret_cast<OT_UINT32_t*>(srcAddr);
         OT_UINT32_t* dst = reinterpret_cast<OT_UINT32_t*>(dstAddr);
+        *dst = *src;
+    }
+    else if (OPTION_type(oDesc) == OT_UCHAR) {
+        OT_UCHAR_t* src = reinterpret_cast<OT_UCHAR_t*>(srcAddr);
+        OT_UCHAR_t* dst = reinterpret_cast<OT_UCHAR_t*>(dstAddr);
         *dst = *src;
     }
     else if (OPTION_type(oDesc) == OT_CSTRING) {
@@ -672,6 +683,12 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
             }
             break;
 
+        case OT_UCHAR:
+            {
+                ival = Value.at(0);
+            }
+            break;
+
         case OT_INT32:
           ival = ::strtol(Value.c_str(), &p, 0);
           if (*p != '\0') {
@@ -835,7 +852,6 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
         }
         break;
 
-
     case OID_DisableAllWarnings:
         if (ival != 0) {
             Opts.clcOptions.append(" --no_warnings");
@@ -897,6 +913,13 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
             Opts.setDefaultWGS(false);
         }
         break;
+
+#if defined(WITH_LIGHTNING_COMPILER)
+    case OID_OptUseNative:
+        Opts.llvmOptions.append(" -mllvm -amdgpu-use-native=");
+        Opts.llvmOptions.append(sval);
+        break;
+#endif
 
     case OID_WFComma:
     case OID_WBComma:
@@ -1591,6 +1614,11 @@ bool Options::equals(const Options& other, bool ignoreClcOptions) const
             OT_CSTRING_t* o = reinterpret_cast<OT_CSTRING_t*>(addr);
             OT_CSTRING_t* o2 = reinterpret_cast<OT_CSTRING_t*>(addr2);
             if (!isCStrOptionsEqual(*o,*o2)) return false;
+        }
+        else if (OPTION_type(od) == OT_UCHAR) {
+            OT_UCHAR_t* o = reinterpret_cast<OT_UCHAR_t*>(addr);
+            OT_UCHAR_t* o2 = reinterpret_cast<OT_UCHAR_t*>(addr2);
+            if (*o != *o2) return false;
         }
         else {
             return false;

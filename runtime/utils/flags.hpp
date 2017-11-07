@@ -64,8 +64,6 @@ release(bool, GPU_FLUSH_ON_EXECUTION, false,                                  \
         "Submit commands to HW on every operation. 0 - Disable, 1 - Enable")  \
 release(bool, GPU_USE_SYNC_OBJECTS, true,                                     \
         "If enabled, use sync objects instead of polling")                    \
-release(bool, ENABLE_CAL_SHUTDOWN, false,                                     \
-        "Enable explicit CAL shutdown (for PM4 capture)")                     \
 release(bool, CL_KHR_FP64, true,                                              \
         "Enable/Disable support for double precision")                        \
 release(cstring, AMD_OCL_BUILD_OPTIONS, 0,                                    \
@@ -185,6 +183,10 @@ release(bool, OCL_STUB_PROGRAMS, false,                                       \
         "1 = Enables OCL programs stubing")                                   \
 release(bool, GPU_ANALYZE_HANG, false,                                        \
         "1 = Enables GPU hang analysis")                                      \
+release(uint, GPU_MAX_REMOTE_MEM_SIZE, 2,                                     \
+        "Maximum size (in Ki) that allows device memory substitution with system") \
+release(bool, GPU_ADD_HBCC_SIZE, false,                                       \
+        "Add HBCC size to the reported device memory")                        \
 release_on_stg(uint, GPU_WAVE_LIMIT_CU_PER_SH, 0,                             \
         "Assume the number of CU per SH for wave limiter")                    \
 release_on_stg(uint, GPU_WAVE_LIMIT_MAX_WAVE, 10,                             \

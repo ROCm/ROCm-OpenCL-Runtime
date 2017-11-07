@@ -283,6 +283,10 @@ struct Info : public amd::EmbeddedObject {
   //  using the data-parallel execution model.
   size_t maxWorkGroupSize_;
 
+  //! Preferred number of work-items in a work-group executing a kernel
+  //  using the data-parallel execution model.
+  size_t preferredWorkGroupSize_;
+
   //! Number of shader engines in physical GPU
   size_t numberOfShaderEngines;
 
@@ -377,6 +381,9 @@ struct Info : public amd::EmbeddedObject {
 
   //! Max size in bytes of a constant buffer allocation.
   cl_ulong maxConstantBufferSize_;
+
+  //! Preferred size in bytes of a constant buffer allocation.
+  cl_ulong preferredConstantBufferSize_;
 
   //! Max number of arguments declared
   cl_uint maxConstantArgs_;
