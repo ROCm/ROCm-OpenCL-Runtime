@@ -9,6 +9,7 @@
 #include "os/os.hpp"
 #include "utils/debug.hpp"
 #include "utils/flags.hpp"
+#include "utils/options.hpp"
 #include "utils/versions.hpp"
 #include "thread/monitor.hpp"
 #include "CL/cl_ext.h"
@@ -20,9 +21,7 @@
 #include "device/rocm/rocprogram.hpp"
 #if defined(WITH_LIGHTNING_COMPILER)
 #include "driver/AmdCompiler.h"
-#else  // !defined(WITH_LIGHTNING_COMPILER)
-#include "device/rocm/roccompilerlib.hpp"
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER)
 #include "device/rocm/rocmemory.hpp"
 #include "device/rocm/rocglinterop.hpp"
 #ifdef WITH_AMDGPU_PRO
@@ -191,46 +190,38 @@ Device::~Device() {
   }
 }
 bool NullDevice::initCompiler(bool isOffline) {
-#if !defined(WITH_LIGHTNING_COMPILER)
-  // Initializes g_complibModule and g_complibApi if they were not initialized
-  if (g_complibModule == nullptr) {
-    if (!LoadCompLib(isOffline)) {
-      if (!isOffline) {
-        LogError("Error - could not find the compiler library");
-      }
-      return false;
-    }
-  }
+#if defined(WITH_COMPILER_LIB)
   // Initialize the compiler handle if has already not been initialized
   // This is destroyed in Device::teardown
   acl_error error;
   if (!compilerHandle_) {
-    compilerHandle_ = g_complibApi._aclCompilerInit(nullptr, &error);
+    aclCompilerOptions opts = {
+      sizeof(aclCompilerOptions_0_8),
+      IF(IS_LIGHTNING, "libamdoclcl64.so", NULL),
+      NULL, NULL, NULL, NULL, NULL, NULL
+    };
+    compilerHandle_ = aclCompilerInit(&opts, &error);
     if (error != ACL_SUCCESS) {
+#if !defined(WITH_LIGHTNING_COMPILER)
       LogError("Error initializing the compiler handle");
       return false;
+#endif // !defined(WITH_LIGHTNING_COMPILER)
     }
   }
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_COMPILER_LIB)
   return true;
 }
 
 bool NullDevice::destroyCompiler() {
-#if defined(WITH_LIGHTNING_COMPILER)
-  delete compilerHandle_;
-  compilerHandle_ = nullptr;
-#else   // !defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_COMPILER_LIB)
   if (compilerHandle_ != nullptr) {
-    acl_error error = g_complibApi._aclCompilerFini(compilerHandle_);
+    acl_error error = aclCompilerFini(compilerHandle_);
     if (error != ACL_SUCCESS) {
       LogError("Error closing the compiler");
       return false;
     }
   }
-  if (g_complibModule != nullptr) {
-    UnloadCompLib();
-  }
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_COMPILER_LIB)
   return true;
 }
 
@@ -678,11 +669,22 @@ bool Device::create() {
 }
 
 device::Program* NullDevice::createProgram(amd::option::Options* options) {
+#if defined(WITH_COMPILER_LIB)
   return new roc::HSAILProgram(*this);
+#else // !defined(WITH_COMPILER_LIB)
+  return NULL;
+#endif // !defined(WITH_COMPILER_LIB)
 }
 
 device::Program* Device::createProgram(amd::option::Options* options) {
+#if defined(WITH_LIGHTNING_COMPILER)
+  if (!compilerHandle_ || !options->oVariables->Legacy) {
+    return new roc::LightningProgram(*this);
+  }
+#endif // defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_COMPILER_LIB)
   return new roc::HSAILProgram(*this);
+#endif // defined(WITH_COMPILER_LIB)
 }
 
 hsa_status_t Device::iterateGpuMemoryPoolCallback(hsa_amd_memory_pool_t pool, void* data) {
@@ -965,7 +967,9 @@ bool Device::populateOCLDeviceConstants() {
     return false;
   }
   std::stringstream ss;
-  ss << AMD_BUILD_STRING " (HSA" << major << "." << minor << "," IF(IS_LIGHTNING, "LC", "HSAIL") ")";
+  ss << AMD_BUILD_STRING " (HSA" << major << "." << minor << "," IF(IS_LIGHTNING, "LC", "HSAIL");
+  if (IS_LIGHTNING && compilerHandle_) ss << "*,HSAIL";
+  ss <<  ")";
 
   strcpy(info_.driverVersion_, ss.str().c_str());
   info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"1.2" " ";
