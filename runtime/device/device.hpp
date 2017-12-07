@@ -19,7 +19,7 @@
 #if defined(WITH_LIGHTNING_COMPILER)
 #include "caching/cache.hpp"
 #include "driver/AmdCompiler.h"
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_LIGHTNING_COMPILER)
 #include "acl.h"
 
 #include "hwdebug.hpp"
@@ -119,6 +119,7 @@ enum OclExtensions {
   ClKhrIlProgram,
   ClAMDLiquidFlash,
   ClAmdCopyBufferP2P,
+  ClAmdAssemblyProgram,
   ClExtTotal
 };
 
@@ -161,6 +162,7 @@ static const char* OclExtensionsString[] = {"cl_khr_fp64 ",
                                             IS_MAINLINE ? "" : "cl_khr_il_program ",
                                             "cl_amd_liquid_flash ",
                                             "cl_amd_copy_buffer_p2p ",
+                                            "cl_amd_assembly_program ",
                                             NULL};
 
 static constexpr int AmdVendor = 0x1002;
@@ -1084,7 +1086,7 @@ class Program : public amd::HeapObject {
   ClBinary* clBinary() { return clBinary_; }
   const ClBinary* clBinary() const { return clBinary_; }
 
-  bool setBinary(char* binaryIn, size_t size);
+  bool setBinary(const char* binaryIn, size_t size);
 
   type_t type() const { return type_; }
 
@@ -1116,7 +1118,7 @@ class Program : public amd::HeapObject {
   virtual bool createBIFBinary(aclBinary* bin);
 
   //! Initialize Binary (used only for clCreateProgramWithBinary()).
-  bool initClBinary(char* binaryIn, size_t size);
+  bool initClBinary(const char* binaryIn, size_t size);
 
   //! Initialize Binary
   virtual bool initClBinary() = 0;
@@ -1165,10 +1167,10 @@ class ClBinary : public amd::HeapObject {
 
   /** called only in loading image routines,
       never called in storing routines */
-  bool setBinary(char* theBinary, size_t theBinarySize, bool allocated = false);
+  bool setBinary(const char* theBinary, size_t theBinarySize, bool allocated = false);
 
   //! setin elfIn_
-  bool setElfIn(unsigned char eclass);
+  bool setElfIn();
   void resetElfIn();
 
   //! set out elf
@@ -1189,9 +1191,9 @@ class ClBinary : public amd::HeapObject {
   bool createElfBinary(bool doencrypt, Program::type_t type);
 
   // save BIF binary image
-  void saveBIFBinary(char* binaryIn, size_t size);
+  void saveBIFBinary(const char* binaryIn, size_t size);
 
-  bool decryptElf(char* binaryIn, size_t size, char** decryptBin, size_t* decryptSize,
+  bool decryptElf(const char* binaryIn, size_t size, char** decryptBin, size_t* decryptSize,
                   int* encryptCode);
 
   //! Returns the binary pair for the abstraction layer
@@ -1222,7 +1224,7 @@ class ClBinary : public amd::HeapObject {
   //! Check if the binary is recompilable
   bool isRecompilable(std::string& llvmBinary, amd::OclElf::oclElfPlatform thePlatform);
 
-  void saveOrigBinary(char* origBinary, size_t origSize) {
+  void saveOrigBinary(const char* origBinary, size_t origSize) {
     origBinary_ = origBinary;
     origSize_ = origSize;
   }
@@ -1306,11 +1308,11 @@ class ClBinary : public amd::HeapObject {
   //! Releases the binary data store
   void release();
 
-  char* binary_;  //!< binary data
+  const char* binary_;  //!< binary data
   size_t size_;   //!< binary size
   uint flags_;    //!< CL binary object flags
 
-  char* origBinary_;  //!< original binary data
+  const char* origBinary_;  //!< original binary data
   size_t origSize_;   //!< original binary size
 
   int encryptCode_;  //!< Encryption Code for input binary (0 for not encrypted)
@@ -1468,11 +1470,7 @@ class SvmManager : public AllStatic {
 */
 class Device : public RuntimeObject {
  protected:
-#if defined(WITH_LIGHTNING_COMPILER)
-  typedef amd::opencl_driver::Compiler Compiler;
-#else   // !defined(WITH_LIGHTNING_COMPILER)
   typedef aclCompiler Compiler;
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
 
  public:
   typedef std::list<CommandQueue*> CommandQueues;
@@ -1753,7 +1751,6 @@ struct KernelParameterDescriptor {
 };
 
 #if defined(WITH_LIGHTNING_COMPILER)
-
 //! Compilation process with cache support.
 class CacheCompilation : public amd::HeapObject {
  public:
@@ -1790,8 +1787,7 @@ class CacheCompilation : public amd::HeapObject {
   StringCache codeCache_;          //! Cached codes
   const bool isCodeCacheEnabled_;  //! Code cache enable
 };
-
-#endif
+#endif // defined(WITH_LIGHTNING_COMPILER)
 
 /*! @}
  *  @}
