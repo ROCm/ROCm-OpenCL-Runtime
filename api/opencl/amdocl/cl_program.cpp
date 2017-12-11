@@ -134,7 +134,7 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithSource,
   }
 
   // Create the program
-  amd::Program* program = new amd::Program(*as_amd(context), sourceCode);
+  amd::Program* program = new amd::Program(*as_amd(context), sourceCode, amd::Program::OpenCL_C);
   if (program == NULL) {
     *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
     return (cl_program)0;
@@ -196,7 +196,7 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithIL,
   }
 
   // Create the program
-  amd::Program* program = new amd::Program(*as_amd(context), "", true);
+  amd::Program* program = new amd::Program(*as_amd(context), amd::Program::SPIRV);
   if (program == NULL) {
     *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
     return (cl_program)0;
@@ -330,6 +330,58 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithBinary,
 }
 RUNTIME_EXIT
 
+RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithAssemblyAMD,
+    (cl_context context, cl_uint count, const char** strings, const size_t* lengths,
+        cl_int* errcode_ret)) {
+  if (!is_valid(context)) {
+    *not_null(errcode_ret) = CL_INVALID_CONTEXT;
+    return (cl_program)0;
+  }
+  if (count == 0 || strings == NULL) {
+    *not_null(errcode_ret) = CL_INVALID_VALUE;
+    return (cl_program)0;
+  }
+
+  std::string assembly;
+  for (cl_uint i = 0; i < count; ++i) {
+    if (strings[i] == NULL) {
+      *not_null(errcode_ret) = CL_INVALID_VALUE;
+      return (cl_program)0;
+    }
+    if (lengths && lengths[i] != 0) {
+      assembly.append(strings[i], lengths[i]);
+    } else {
+      assembly.append(strings[i]);
+    }
+  }
+  if (assembly.empty()) {
+    *not_null(errcode_ret) = CL_INVALID_VALUE;
+    return (cl_program)0;
+  }
+
+  // Create the program
+  amd::Program* program = new amd::Program(*as_amd(context), assembly, amd::Program::Assembly);
+  if (program == NULL) {
+    *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
+    return (cl_program)0;
+  }
+
+  // Add programs for all devices in the context.
+  const std::vector<amd::Device*>& devices = as_amd(context)->devices();
+  std::vector<amd::Device*>::const_iterator it;
+  for (it = devices.begin(); it != devices.end(); ++it) {
+    if (program->addDeviceProgram(**it) == CL_OUT_OF_HOST_MEMORY) {
+      *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
+      program->release();
+      return (cl_program)0;
+    }
+  }
+
+  *not_null(errcode_ret) = CL_SUCCESS;
+  return as_cl(program);
+}
+RUNTIME_EXIT
+
 /*! \brief Increment the program reference count.
  *
  *  clCreateProgram does an implicit retain.
@@ -456,12 +508,12 @@ RUNTIME_ENTRY(cl_int, clBuildProgram,
 }
 RUNTIME_EXIT
 
-/*! \brief compiles a program’s source for all the devices or a specific
+/*! \brief compiles a program's source for all the devices or a specific
  *  device(s) in the OpenCL context associated with program. The pre-processor
  *  runs before the program sources are compiled.
  *  The compiled binary is built for all devices associated with program or
  *  the list of devices specified. The compiled binary can be queried using
- *  \a clGetProgramInfo(program, CL_PROGRAM_BINARIES, …) and can be specified
+ *  \a clGetProgramInfo(program, CL_PROGRAM_BINARIES, ...) and can be specified
  *  to \a clCreateProgramWithBinary to create a new program object.
  *
  *  \param program is the program object that is the compilation target.
@@ -489,7 +541,7 @@ RUNTIME_EXIT
  *  source in program that comes from an embedded header. The corresponding entry
  *  in input_headers identifies the program object which contains the header
  *  source to be used. The embedded headers are first searched before the headers
- *  in the list of directories specified by the –I compile option (as described in
+ *  in the list of directories specified by the -I compile option (as described in
  *  section 5.6.4.1). If multiple entries in header_include_names refer to the same
  *  header name, the first one encountered will be used.
  *
@@ -500,7 +552,7 @@ RUNTIME_EXIT
  *  \a clCompileProgram does not need to wait for the compiler to complete and can
  *  return immediately. If \a pfn_notify is NULL, \a clCompileProgram does not
  *  return until the compiler has completed. This callback function may be called
- *  asynchronously by the OpenCL implementation. It is the application’s
+ *  asynchronously by the OpenCL implementation. It is the application's
  *  responsibility to ensure that the callback function is thread-safe.
  *
  *  \param user_data will be passed as an argument when pfn_notify is called.
@@ -596,7 +648,7 @@ RUNTIME_EXIT
  *  the devices or a specific device(s) in the OpenCL context and creates
  *  an executable. clLinkProgram creates a new program object which contains
  *  this executable. The executable binary can be queried using
- *  \a clGetProgramInfo(program, CL_PROGRAM_BINARIES, …) and can be specified
+ *  \a clGetProgramInfo(program, CL_PROGRAM_BINARIES, ...) and can be specified
  *  to \a clCreateProgramWithBinary to create a new program object.
  *  The devices associated with the returned program object will be the list
  *  of devices specified by device_list or if device_list is NULL it will be
@@ -639,7 +691,7 @@ RUNTIME_EXIT
  *  callback function is called with a valid program object (if the link was
  *  successful) or NULL (if the link encountered a failure). This callback
  *  function may be called asynchronously by the OpenCL implementation. It is
- *  the application’s responsibility to ensure that the callback function is
+ *  the application's responsibility to ensure that the callback function is
  *  thread-safe. If \a pfn_notify is NULL, \a clLinkProgram does not return
  *  until the linker has completed. clLinkProgram returns a valid non-zero
  *  program object (if the link was successful) or NULL (if the link
@@ -1097,6 +1149,93 @@ RUNTIME_ENTRY(cl_int, clGetProgramBuildInfo,
 }
 RUNTIME_EXIT
 
+/*! \brief Sets the values of a SPIR-V specialization constants.
+ *
+ *  \param program must be a valid OpenCL program created from a SPIR-V module.
+ *
+ *  \param spec id_ identifies the SPIR-V specialization constant whose value will be set.
+ *
+ *  \param spec_size specifies the size in bytes of the data pointed to by spec_value. This should
+ *  be 1 for boolean constants. For all other constant types this should match the size of the
+ *  specialization constant in the SPIR-V module.
+ *
+ *  \param spec_value is a pointer to the memory location that contains the value of the
+ *  specialization constant. The data pointed to by \a spec_value are copied and can be safely
+ *  reused by the application after \a clSetProgramSpecializationConstant returns. This
+ *  specialization value will be used by subsequent calls to \a clBuildProgram until another call to
+ *  \a clSetProgramSpecializationConstant changes it. If a specialization constant is a boolean
+ *  constant, _spec value_should be a pointer to a cl_uchar value. A value of zero will set the
+ *  specialization constant to false; any other value will set it to true.
+ *
+ *  Calling this function multiple times for the same specialization constant shall cause the last
+ *  provided value to override any previously specified value. The values are used by a subsequent
+ *  \a clBuildProgram call for the program.
+ *
+ *  Application is not required to provide values for every specialization constant contained in
+ *  SPIR-V module. SPIR-V provides default values for all specialization constants.
+ *
+ *  \return One of the following values:
+ *  - CL_SUCCESS if the function is executed successfully.
+ *  - CL_INVALID_PROGRAM if program is not a valid program object created from a SPIR-V module.
+ *  - CL_INVALID_SPEC_ID if spec_id is not a valid specialization constant ID
+ *  - CL_INVALID_VALUE if spec_size does not match the size of the specialization constant in the
+ *    SPIR-V module, or if spec_value is NULL.
+ *  - CL_OUT_OF_RESOURCES if there is a failure to allocate resources required by the OpenCL
+ *    implementation on the device.
+ *  - CL_OUT_OF_HOST_MEMORY if there is a failure to allocate resources required by the OpenCL
+ *    implementation on the host.
+ *
+ *  \version 2.2-3
+ */
+RUNTIME_ENTRY(cl_int, clSetProgramSpecializationConstant,
+              (cl_program program, cl_uint spec_id, size_t spec_size, const void* spec_value)) {
+  if (!is_valid(program)) {
+    return CL_INVALID_PROGRAM;
+  }
+  return CL_INVALID_VALUE;
+}
+RUNTIME_EXIT
+
+/*! \brief registers a user callback function with a program object. Each call to
+ * \a clSetProgramReleaseCallback registers the specified user callback function on a callback stack
+ * associated with program. The registered user callback functions are called in the reverse order
+ * in which they were registered. The user callback functions are called after destructors (if any)
+ * for program scope global variables (if any) are called and before the program is released.
+ * This provides a mechanism for the application (and libraries) to be notified when destructors
+ * are complete.
+ *
+ * \param program is a valid program object
+ *
+ * \param pfn_notify is the callback function that can be registered by the application. This
+ * callback function may be called asynchronously by the OpenCL implementation. It is the
+ * application's responsibility to ensure that the callback function is thread safe. The parameters
+ * to this callback function are:
+ * - \a prog is the program object whose destructors are being called. When the user callback is
+ *   called by the implementation, this program object is not longer valid. \a prog is only provided
+ *   for reference purposes.
+ * - \a user_data is a pointer to user supplied data. \a user_data will be passed as the
+ *   \a user_data argument when pfn_notify is called. user data can be NULL.
+ *
+ *  \return One of the following values:
+ * - CL_SUCCESS if the function is executed successfully.
+ * - CL_INVALID_PROGRAM if program is not a valid program object.
+ * - CL_INVALID_VALUE if pfn_notify is NULL.
+ * - CL_OUT_OF_RESOURCES if there is a failure to allocate resources required by the OpenCL
+ * implementation on the device.
+ *
+ * \version 2.2-3
+ */
+RUNTIME_ENTRY(cl_int, clSetProgramReleaseCallback,
+              (cl_program program, void (CL_CALLBACK *pfn_notify)(
+                  cl_program program, void *user_data
+                  ), void *user_data)) {
+  if (!is_valid(program)) {
+    return CL_INVALID_PROGRAM;
+  }
+  return CL_INVALID_VALUE;
+}
+RUNTIME_EXIT
+
 /*! @}
  *  @}
  *
@@ -1320,45 +1459,13 @@ RUNTIME_ENTRY_RET(cl_kernel, clCloneKernel,
     return (cl_kernel)0;
   }
 
-  amd::Kernel* srcKernel = as_amd(source_kernel);
-  amd::Program* program = &(srcKernel->program());
-  const char* kernelName = srcKernel->name().c_str();
-  const amd::Symbol* symbol = program->findSymbol(kernelName);
-  if (symbol == NULL) {
-    *not_null(errcode_ret) = CL_INVALID_KERNEL_NAME;
-    return (cl_kernel)0;
-  }
-
-  amd::Kernel* kernel = new amd::Kernel(*program, *symbol, kernelName);
+  amd::Kernel* kernel = new amd::Kernel(*as_amd(source_kernel));
   if (kernel == NULL) {
     *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
     return (cl_kernel)0;
   }
 
-  //TODO:  implemente the clone kernel logic
-  LogWarning("Device support for clCloneKernel() has not been implemented");
-
-#if 0
-  // clone kernel logic - unverified
-
-  // clone the parameter values_, defined_, svmBound_ arrays
-  amd::KernelParameters* srcParameters = &(srcKernel->parameters());
-  amd::KernelParameters* parameters = &(kernel->parameters());
-  const amd::KernelSignature& signature = kernel->signature();
-  size_t size = signature.paramsSize() + signature.numParameters() * sizeof(bool) * 2;
-  ::memcpy(parameters->values(), srcParameters->values(), size);
-
-  // clone the exec info
-  parameters->setExecInfoOffset(srcParameters->getExecInfoOffset());
-
-  parameters->addSvmPtr(srcParameters->getExecSvmPtr(), srcParameters->getNumberOfSvmPtr());
-  parameters->setSvmSystemPointersSupport(srcParameters->getSvmSystemPointersSupport());
-  parameters->setValidated(srcParameters->getValidated());
-  parameters->setExecNewVcop(srcParameters->getExecNewVcop());
-  parameters->setExecPfpaVcop(srcParameters->getExecPfpaVcop());
-#endif
-
-  *not_null(errcode_ret) = CL_INVALID_VALUE;
+  *not_null(errcode_ret) = CL_SUCCESS;
   return as_cl(kernel);
 }
 RUNTIME_EXIT
@@ -1800,8 +1907,8 @@ RUNTIME_ENTRY(cl_int, clGetKernelSubGroupInfo,
 
   // Get the corresponded parameters
   switch (param_name) {
-    case CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE_KHR:
-    case CL_KERNEL_SUB_GROUP_COUNT_FOR_NDRANGE_KHR: {
+    case CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE:
+    case CL_KERNEL_SUB_GROUP_COUNT_FOR_NDRANGE: {
       // Infer the number of dimensions from 'input_value_size'
       size_t dims = input_value_size / sizeof(size_t);
       if (dims == 0 || dims > 3 || input_value_size != dims * sizeof(size_t)) {
@@ -1828,12 +1935,55 @@ RUNTIME_ENTRY(cl_int, clGetKernelSubGroupInfo,
                                 : numSubGroups,
                             param_value_size, param_value, param_value_size_ret);
     }
-    case CL_KERNEL_LOCAL_SIZE_FOR_SUB_GROUP_COUNT:
-    case CL_KERNEL_MAX_NUM_SUB_GROUPS:
-    case CL_KERNEL_COMPILE_NUM_SUB_GROUPS:
-      //TODO:  implemente the kernel subgroup info query
-      LogWarning("Device support for clGetKernelSubGroupInfo() query has not been implemented.");
-      return CL_INVALID_VALUE;
+    case CL_KERNEL_COMPILE_NUM_SUB_GROUPS: {
+      size_t numSubGroups = 0;
+      return amd::clGetInfo(numSubGroups, param_value_size, param_value, param_value_size_ret);
+    }
+    case CL_KERNEL_MAX_NUM_SUB_GROUPS: {
+      size_t waveSize = as_amd(device)->info().wavefrontWidth_;
+      size_t numSubGroups = as_amd(device)->type() == CL_DEVICE_TYPE_CPU
+          ? 1 : (devKernel->workGroupInfo()->size_  + waveSize - 1) / waveSize;
+      return amd::clGetInfo(numSubGroups, param_value_size, param_value, param_value_size_ret);
+    }
+    case CL_KERNEL_LOCAL_SIZE_FOR_SUB_GROUP_COUNT: {
+      if (input_value_size != sizeof(size_t)) {
+        return CL_INVALID_VALUE;
+      }
+      size_t numSubGroups = ((size_t*)input_value)[0];
+
+      // Infer the number of dimensions from 'param_value_size'
+      size_t dims = param_value_size / sizeof(size_t);
+      if (dims == 0 || dims > 3 || param_value_size != dims * sizeof(size_t)) {
+        return CL_INVALID_VALUE;
+      }
+      *not_null(param_value_size_ret) = param_value_size;
+
+      size_t localSize;
+      if (as_amd(device)->type() == CL_DEVICE_TYPE_CPU) {
+        if (numSubGroups != 1) {
+          ::memset(param_value, '\0', dims * sizeof(size_t));
+          return CL_SUCCESS;
+        }
+        localSize = devKernel->workGroupInfo()->size_;
+      }
+      else {
+        localSize = numSubGroups * as_amd(device)->info().wavefrontWidth_;
+        if (localSize > devKernel->workGroupInfo()->size_) {
+          ::memset(param_value, '\0', dims * sizeof(size_t));
+          return CL_SUCCESS;
+        }
+      }
+
+      switch (dims) {
+        case 3:
+          ((size_t*)param_value)[2] = 1;
+        case 2:
+          ((size_t*)param_value)[1] = 1;
+        case 1:
+          ((size_t*)param_value)[0] = localSize;
+      }
+      return CL_SUCCESS;
+    }
     default:
       return CL_INVALID_VALUE;
   }

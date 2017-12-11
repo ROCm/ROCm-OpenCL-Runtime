@@ -85,6 +85,10 @@ class Memory : public device::Memory {
 
   size_t version() const { return version_; }
 
+  bool IsPersistentDirectMap() const { return (persistent_host_ptr_ != nullptr); }
+
+  void* PersistentHostPtr() const { return persistent_host_ptr_; }
+
  protected:
   bool allocateMapMemory(size_t allocationSize);
 
@@ -109,6 +113,8 @@ class Memory : public device::Memory {
   MEMORY_KIND kind_;
 
   hsa_amd_image_descriptor_t* amdImageDesc_;
+
+  void* persistent_host_ptr_;  //!< Host accessible pointer for persistent memory
 
  private:
   // Disable copy constructor
