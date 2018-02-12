@@ -64,6 +64,9 @@ The following build steps are performed:
     
 ## RUNNING clinfo
 
-    LLVM_BIN=./compiler/llvm/bin LD_LIBRARY_PATH=./lib clinfo
+Assuming you are in "build" directory from the previous step:
 
-OpenCL™ is registered Trademark of Apple  
+    export LD_LIBRARY_PATH=<path-to-build>/lib
+    ./bin/clinfo
+
+OpenCL™ is registered Trademark of Apple
