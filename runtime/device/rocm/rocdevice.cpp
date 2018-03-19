@@ -88,6 +88,8 @@ static HsaDeviceId getHsaDeviceId(hsa_agent_t device, uint32_t& pci_id) {
       return HSA_VEGA10_ID;
     case 901:
       return HSA_VEGA10_HBCC_ID;
+    case 902:
+      return HSA_RAVEN_ID;
     default:
       return HSA_INVALID_DEVICE_ID;
   }
@@ -568,6 +570,7 @@ bool Device::create() {
   if (pro_device_ != nullptr) {
     pro_ena_ = true;
     settings_->enableExtension(ClAMDLiquidFlash);
+    pro_device_->GetAsicIdAndRevisionId(&info_.pcieDeviceId_, &info_.pcieRevisionId_);
   }
 #endif
 
@@ -809,7 +812,11 @@ bool Device::populateOCLDeviceConstants() {
                          &info_.maxClockFrequency_)) {
     return false;
   }
-  assert(info_.maxClockFrequency_ > 0);
+
+  //TODO: add the assert statement for Raven
+  if (deviceInfo_.gfxipVersion_ != 902) {
+    assert(info_.maxClockFrequency_ > 0);
+  }
 
   if (HSA_STATUS_SUCCESS !=
       hsa_amd_agent_iterate_memory_pools(cpu_agent_, Device::iterateCpuMemoryPoolCallback, this)) {
@@ -1129,6 +1136,7 @@ bool Device::populateOCLDeviceConstants() {
     }
     //TODO: set to true once thread trace support is available
     info_.threadTraceEnable_ = false;
+    info_.pcieDeviceId_ = deviceInfo_.pciDeviceId_;
   }
 
   info_.maxPipePacketSize_ = info_.maxMemAllocSize_;

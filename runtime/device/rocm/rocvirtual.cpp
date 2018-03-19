@@ -1398,8 +1398,12 @@ static inline address addArg(address dst, const void* src, size_t size) {
 
 // Over rides the workgroup size fields in the packet with runtime/compiler set sizes
 void setRuntimeCompilerLocalSize(hsa_kernel_dispatch_packet_t& dispatchPacket,
-                                 amd::NDRangeContainer sizes, const size_t* compile_size,
+                                 amd::NDRangeContainer sizes, device::Kernel* devKernel,
                                  const roc::Device& dev) {
+
+  Kernel& gpuKernel = static_cast<Kernel&>(*devKernel);
+  const size_t* compile_size = devKernel->workGroupInfo()->compileSize_;
+
   // Todo (sramalin) need to check if compile_size is set to 0 if dimension is not valid
   // else this error check is incorrect
   if (compile_size[0] || compile_size[1] || compile_size[2]) {
@@ -1407,20 +1411,113 @@ void setRuntimeCompilerLocalSize(hsa_kernel_dispatch_packet_t& dispatchPacket,
     dispatchPacket.workgroup_size_y = sizes.dimensions() > 1 ? compile_size[1] : 1;
     dispatchPacket.workgroup_size_z = sizes.dimensions() > 2 ? compile_size[2] : 1;
   } else {
-    // Runtime must set the group size
-    dispatchPacket.workgroup_size_x = 1;
-    dispatchPacket.workgroup_size_y = 1;
-    dispatchPacket.workgroup_size_z = 1;
+    size_t thrPerGrp;
+    bool b1DOverrideSet = !flagIsDefault(GPU_MAX_WORKGROUP_SIZE);
+    bool b2DOverrideSet = !flagIsDefault(GPU_MAX_WORKGROUP_SIZE_2D_X) ||
+        !flagIsDefault(GPU_MAX_WORKGROUP_SIZE_2D_Y);
+    bool b3DOverrideSet = !flagIsDefault(GPU_MAX_WORKGROUP_SIZE_3D_X) ||
+        !flagIsDefault(GPU_MAX_WORKGROUP_SIZE_3D_Y) ||
+        !flagIsDefault(GPU_MAX_WORKGROUP_SIZE_3D_Z);
 
-    if (sizes.dimensions() == 1) {
-      dispatchPacket.workgroup_size_x = dev.settings().preferredWorkGroupSize_;
-    } else if (sizes.dimensions() == 2) {
-      dispatchPacket.workgroup_size_x = dev.settings().maxWorkGroupSize2DX_;
-      dispatchPacket.workgroup_size_y = dev.settings().maxWorkGroupSize2DY_;
-    } else if (sizes.dimensions() == 3) {
-      dispatchPacket.workgroup_size_x = dev.settings().maxWorkGroupSize3DX_;
-      dispatchPacket.workgroup_size_y = dev.settings().maxWorkGroupSize3DY_;
-      dispatchPacket.workgroup_size_z = dev.settings().maxWorkGroupSize3DZ_;
+    bool overrideSet = ((sizes.dimensions() == 1) && b1DOverrideSet) ||
+                       ((sizes.dimensions() == 2) && b2DOverrideSet) ||
+                       ((sizes.dimensions() == 3) && b3DOverrideSet);
+    if (!overrideSet) {
+      // Find threads per group
+      thrPerGrp = devKernel->workGroupInfo()->size_;
+
+      if (gpuKernel.imageEnable() &&
+          // and thread group is a multiple value of wavefronts
+          ((thrPerGrp % devKernel->workGroupInfo()->wavefrontSize_) == 0) &&
+          // and it's 2 or 3-dimensional workload
+          (sizes.dimensions() > 1) &&
+          ((dev.settings().partialDispatch_) ||
+           (((sizes.global()[0] % 16) == 0) && ((sizes.global()[1] % 16) == 0)))) {
+          // Use 8x8 workgroup size if kernel has image writes)
+        if (gpuKernel.imageWrite() || (thrPerGrp != dev.settings().preferredWorkGroupSize_)) {
+          sizes.local()[0] = 8;
+          sizes.local()[1] = 8;
+        }
+        else {
+          sizes.local()[0] = 16;
+          sizes.local()[1] = 16;
+        }
+        if (sizes.dimensions() == 3)  {
+          sizes.local()[2] = 1;
+        }
+      }
+      else {
+        size_t tmp = thrPerGrp;
+        // Split the local workgroup into the most efficient way
+        for (uint d = 0; d < sizes.dimensions(); ++d) {
+            size_t div = tmp;
+            for (; (sizes.global()[d] % div) != 0; div--)
+              ;
+            sizes.local()[d] = div;
+            tmp /= div;
+        }
+
+        // Assuming DWORD access
+        const uint cacheLineMatch = dev.info().globalMemCacheLineSize_ >> 2;
+
+        // Check if partial dispatch is enabled and
+        if (dev.settings().partialDispatch_ &&
+            // we couldn't find optimal workload
+            ((sizes.local().product() % devKernel->workGroupInfo()->wavefrontSize_) != 0 ||
+                  // or size is too small for the cache line
+             (sizes.local()[0] < cacheLineMatch))) {
+          size_t maxSize = 0;
+          size_t maxDim = 0;
+          for (uint d = 0; d < sizes.dimensions(); ++d) {
+            if (maxSize < sizes.global()[d]) {
+              maxSize = sizes.global()[d];
+              maxDim = d;
+            }
+          }
+
+          if ((maxDim != 0) && (sizes.global()[0] >= (cacheLineMatch / 2))) {
+            sizes.local()[0] = cacheLineMatch;
+            thrPerGrp /= cacheLineMatch;
+            sizes.local()[maxDim] = thrPerGrp;
+            for (uint d = 1; d < sizes.dimensions(); ++d) {
+              if (d != maxDim) {
+                sizes.local()[d] = 1;
+              }
+            }
+          }
+          else {
+            // Check if a local workgroup has the most optimal size
+            if (thrPerGrp > maxSize) {
+              thrPerGrp = maxSize;
+            }
+            sizes.local()[maxDim] = thrPerGrp;
+            for (uint d = 0; d < sizes.dimensions(); ++d) {
+              if (d != maxDim) {
+                sizes.local()[d] = 1;
+              }
+            }
+          }
+        }
+      }
+      dispatchPacket.workgroup_size_x = sizes.dimensions() > 0 ? sizes.local()[0] : 1;
+      dispatchPacket.workgroup_size_y = sizes.dimensions() > 1 ? sizes.local()[1] : 1;
+      dispatchPacket.workgroup_size_z = sizes.dimensions() > 2 ? sizes.local()[2] : 1;
+    } else {
+      // Runtime must set the group size
+      dispatchPacket.workgroup_size_x = 1;
+      dispatchPacket.workgroup_size_y = 1;
+      dispatchPacket.workgroup_size_z = 1;
+
+      if (sizes.dimensions() == 1) {
+        dispatchPacket.workgroup_size_x = dev.settings().preferredWorkGroupSize_;
+      } else if (sizes.dimensions() == 2) {
+        dispatchPacket.workgroup_size_x = dev.settings().maxWorkGroupSize2DX_;
+        dispatchPacket.workgroup_size_y = dev.settings().maxWorkGroupSize2DY_;
+      } else if (sizes.dimensions() == 3) {
+        dispatchPacket.workgroup_size_x = dev.settings().maxWorkGroupSize3DX_;
+        dispatchPacket.workgroup_size_y = dev.settings().maxWorkGroupSize3DY_;
+        dispatchPacket.workgroup_size_z = dev.settings().maxWorkGroupSize3DZ_;
+      }
     }
   }
 }
@@ -1716,7 +1813,6 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
     dispatchPacket.grid_size_y = sizes.dimensions() > 1 ? newGlobalSize[1] : 1;
     dispatchPacket.grid_size_z = sizes.dimensions() > 2 ? newGlobalSize[2] : 1;
 
-    const size_t* compile_size = devKernel->workGroupInfo()->compileSize_;
     if (sizes.local().product() != 0) {
       dispatchPacket.workgroup_size_x = sizes.dimensions() > 0 ? sizes.local()[0] : 1;
       dispatchPacket.workgroup_size_y = sizes.dimensions() > 1 ? sizes.local()[1] : 1;
@@ -1724,8 +1820,7 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
     } else {
       amd::NDRangeContainer tmpSizes(sizes.dimensions(), &newOffset[0], &newGlobalSize[0],
                                      &(const_cast<amd::NDRangeContainer&>(sizes).local()[0]));
-
-      setRuntimeCompilerLocalSize(dispatchPacket, tmpSizes, compile_size, dev());
+      setRuntimeCompilerLocalSize(dispatchPacket, tmpSizes, devKernel, dev());
     }
     dispatchPacket.kernarg_address = argBuffer;
     dispatchPacket.group_segment_size = ldsUsage;
