@@ -245,7 +245,7 @@ aclType Program::getNextCompilationStageFromBinary(amd::option::Options* options
             break;
           }
           sBinOptions = std::string((char*)opts, symSize);
-        } else 
+        } else
 #endif // defined(WITH_COMPILER_LIB)
         {
           sBinOptions = sCurOptions;
@@ -1164,6 +1164,11 @@ bool LightningProgram::linkImpl(amd::option::Options* options) {
   // Set the machine target
   codegenOptions.append(" -mcpu=");
   codegenOptions.append(dev().deviceInfo().machineTarget_);
+
+  // Set xnack option if needed
+  if (dev().deviceInfo().xnackEnabled_) {
+      codegenOptions.append(" -mxnack");
+  }
 
   // Set the -O#
   std::ostringstream optLevel;

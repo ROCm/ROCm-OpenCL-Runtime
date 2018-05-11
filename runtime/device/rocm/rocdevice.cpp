@@ -90,6 +90,8 @@ static HsaDeviceId getHsaDeviceId(hsa_agent_t device, uint32_t& pci_id) {
       return HSA_VEGA10_HBCC_ID;
     case 902:
       return HSA_RAVEN_ID;
+    case 904:
+      return HSA_VEGA12_ID;
     default:
       return HSA_INVALID_DEVICE_ID;
   }
@@ -617,6 +619,9 @@ bool Device::create() {
   // with dash as delimiter to be compatible with Windows directory name
   std::ostringstream cacheTarget;
   cacheTarget << "AMD-AMDGPU-" << gfxipMajor << "-" << gfxipMinor << "-" << gfxipStepping;
+  if (deviceInfo_.xnackEnabled_) {
+    cacheTarget << "-xnack";
+  }
 
   amd::CacheCompilation* compObj = new amd::CacheCompilation(
       cacheTarget.str(), "_rocm", OCL_CODE_CACHE_ENABLE, OCL_CODE_CACHE_RESET);
@@ -797,6 +802,10 @@ bool Device::populateOCLDeviceConstants() {
 
   std::ostringstream oss;
   oss << "gfx" << gfxipMajor << gfxipMinor << gfxipStepping;
+  if (IS_LIGHTNING && deviceInfo_.xnackEnabled_) {
+    oss << "-xnack";
+  }
+
   ::strcpy(info_.name_, oss.str().c_str());
 
   char device_name[64] = {0};
