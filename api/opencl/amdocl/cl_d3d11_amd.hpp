@@ -171,9 +171,8 @@ public:
             if(pD3D11ResOrig_) pD3D11ResOrig_->Release();
             if(pQuery_) pQuery_->Release();
             // Check if this resource has already been used for interop
-            std::vector<std::pair<void*, std::pair<UINT,UINT>>>::iterator it;
             if(resources_.size()) {
-                for(it = resources_.begin(); it != resources_.end(); ++it) {
+                for(auto& it = resources_.cbegin(); it != resources_.cend(); it++) {
                     if(((pD3D11ResOrig_ && (*it).first == (void*) pD3D11ResOrig_)
                         || ((*it).first == (void*) pD3D11Res_))
                         && (*it).second.first  == subRes_
@@ -252,10 +251,6 @@ public:
         setInteropObj(this);
     }
     virtual ~BufferD3D11() {}
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 };
 
 //! Class Image1DD3D11 is derived from classes Image1D and D3D11Object
@@ -290,10 +285,6 @@ public:
         setInteropObj(this);
     }
     virtual ~Image1DD3D11() {}
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 };
 
 //! Class Image2DD3D11 is derived from classes Image2D and D3D11Object
@@ -328,10 +319,6 @@ public:
         setInteropObj(this);
     }
     virtual ~Image2DD3D11() {}
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 };
 
 //! Class Image3DD3D11 is derived from classes Image3D and D3D11Object
@@ -366,10 +353,6 @@ public:
         setInteropObj(this);
     }
     virtual ~Image3DD3D11() {}
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 };
 
 //! Functions for executing the D3D11 related stuff

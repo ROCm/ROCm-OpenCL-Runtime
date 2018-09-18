@@ -390,7 +390,9 @@ void* Thread::entry(Thread* thread) {
   return thread->main();
 }
 
-bool Os::isThreadAlive(const Thread& thread) { return true; }
+bool Os::isThreadAlive(const Thread& thread) {
+  return ::pthread_kill((pthread_t)thread.handle(), 0) == 0;
+}
 
 const void* Os::createOsThread(amd::Thread* thread) {
   pthread_attr_t threadAttr;
@@ -729,15 +731,19 @@ size_t Os::getPhysicalMemSize() {
   return (size_t)si.totalram * si.mem_unit;
 }
 
-std::string Os::getAppFileName() {
+void Os::getAppPathAndFileName(std::string& appName, std::string& appPathAndName) {
   std::unique_ptr<char[]> buff(new char[FILE_PATH_MAX_LENGTH]());
 
   if (readlink("/proc/self/exe", buff.get(), FILE_PATH_MAX_LENGTH) > 0) {
     // Get filename without path and extension.
-    return std::string(basename(buff.get()));
+    appName = std::string(basename(buff.get()));
+    appPathAndName = std::string(buff.get());
   }
-
-  return "";
+  else {
+    appName = "";
+    appPathAndName = "";
+  }
+  return;
 }
 
 }  // namespace amd

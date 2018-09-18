@@ -26,6 +26,12 @@ static const std::string sgfx900 = "AMD:AMDGPU:9:0:0";
 static const std::string sgfx901 = "AMD:AMDGPU:9:0:1";
 static const std::string sgfx902 = "AMD:AMDGPU:9:0:2";
 static const std::string sgfx903 = "AMD:AMDGPU:9:0:3";
+static const std::string sgfx904 = "AMD:AMDGPU:9:0:4";
+static const std::string sgfx905 = "AMD:AMDGPU:9:0:5";
+static const std::string sgfx906 = "AMD:AMDGPU:9:0:6";
+static const std::string sgfx907 = "AMD:AMDGPU:9:0:7";
+
+static const std::string legacyLibName = LINUX_ONLY("lib") "amdocl12cl" LP64_SWITCH(LINUX_SWITCH("32", ""), "64") LINUX_SWITCH(".so", ".dll");
 
 // Utility function to set a flag in option structure
 // of the aclDevCaps.
@@ -453,35 +459,43 @@ const char *getDeviceName(const aclTargetInfo &target)
   return NULL;
 }
 
-/*! Function that returns the TargetMapping for
- *the specific target device.
- */
-static const TargetMapping& getTargetMapping(const aclTargetInfo &target)
+const TargetMapping& getTargetMapping(const aclTargetInfo &target)
 {
-  switch(target.arch_id) {
-    default:
-      assert(!"Passed a device id that is invalid!");
-      break;
-    case aclX64:
-      return X64TargetMapping[target.chip_id];
-      break;
-    case aclX86:
-      return X86TargetMapping[target.chip_id];
-      break;
-    case aclHSAIL:
-      return HSAILTargetMapping[target.chip_id];
-      break;
-    case aclHSAIL64:
-      return HSAIL64TargetMapping[target.chip_id];
-      break;
-    case aclAMDIL:
-      return AMDILTargetMapping[target.chip_id];
-      break;
-    case aclAMDIL64:
-      return AMDIL64TargetMapping[target.chip_id];
-      break;
+  switch (target.arch_id) {
+  default:
+    break;
+  case aclX64:
+    return X64TargetMapping[target.chip_id];
+    break;
+  case aclX86:
+    return X86TargetMapping[target.chip_id];
+    break;
+  case aclHSAIL:
+    return HSAILTargetMapping[target.chip_id];
+    break;
+  case aclHSAIL64:
+    return HSAIL64TargetMapping[target.chip_id];
+    break;
+  case aclAMDIL:
+    return AMDILTargetMapping[target.chip_id];
+    break;
+  case aclAMDIL64:
+    return AMDIL64TargetMapping[target.chip_id];
+    break;
   };
   return UnknownTarget;
+}
+
+bool isChipSupported(const aclTargetInfo& target)
+{
+  if (!isValidTarget(target)) {
+    return false;
+  }
+  const TargetMapping& Mapping = getTargetMapping(target);
+  if (Mapping.family_enum == FAMILY_UNKNOWN) {
+    return false;
+  }
+  return Mapping.supported;
 }
 
 /*! Function that returns the library type from the TargetMapping table for
@@ -530,6 +544,10 @@ const std::string &getIsaTypeName(const aclTargetInfo *target)
   case 901: return sgfx901;
   case 902: return sgfx902;
   case 903: return sgfx903;
+  case 904: return sgfx904;
+  case 905: return sgfx905;
+  case 906: return sgfx906;
+  case 907: return sgfx907;
   }
 }
 
@@ -593,6 +611,8 @@ int getIsaType(const aclTargetInfo *target)
         default: return 900;
         case AI_GREENLAND_P_A0:
         case AI_GREENLAND_P_A1: return Mapping.xnack_supported ? 901 : 900;
+        case AI_VEGA12_P_A0:    return Mapping.xnack_supported ? 905 : 904;
+        case AI_VEGA20_P_A0:    return Mapping.xnack_supported ? 907 : 906;
       }
     case FAMILY_RV:
       switch (Mapping.chip_enum) {
@@ -1119,4 +1139,8 @@ convertBIF31ToBIF30(aclBinary *src) {
 void dump(aclBinary *bin) {
   bifbase *elfBin = reinterpret_cast<bifbase*>(bin->bin);
   elfBin->dump();
+}
+
+const std::string &getLegacyLibName() {
+  return legacyLibName;
 }

@@ -75,7 +75,7 @@ Memory::Memory(Context& context, Type type, Flags flags, size_t size, void* svmP
       forceSysMemAlloc_(false),
       mapCount_(0),
       svmHostAddress_(svmPtr),
-      svmPtrCommited_(false),
+      svmPtrCommited_(flags & CL_MEM_SVM_FINE_GRAIN_BUFFER ? true : false),
       canBeCached_(true),
       lockMemoryOps_("Memory Ops Lock", true) {}
 
@@ -156,14 +156,6 @@ bool Memory::allocHostMemory(void* initFrom, bool allocHostMem, bool forceCopy) 
 
   const std::vector<Device*>& devices = context_().devices();
 
-  // Find if a non GPU device was created with the context
-  for (size_t i = 0; i < devices.size(); i++) {
-    if (!(devices[i]->info().type_ & CL_DEVICE_TYPE_GPU)) {
-      allocHostMem = true;
-      break;
-    }
-  }
-
   // This allocation is necessary to use coherency mechanism
   // for the initialization
   if (getMemFlags() & (CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR)) {
@@ -213,7 +205,7 @@ bool Memory::allocHostMemory(void* initFrom, bool allocHostMem, bool forceCopy) 
   return true;
 }
 
-bool Memory::create(void* initFrom, bool sysMemAlloc) {
+bool Memory::create(void* initFrom, bool sysMemAlloc, bool skipAlloc) {
   static const bool forceAllocHostMem = false;
 
   initDeviceMemory();
@@ -243,13 +235,10 @@ bool Memory::create(void* initFrom, bool sysMemAlloc) {
   for (size_t i = 0; i < devices.size(); i++) {
     deviceAlloced_[devices[i]] = AllocInit;
 
-    // Only GPU devices have device memory objects
-    if (devices[i]->info().type_ & CL_DEVICE_TYPE_GPU) {
-      deviceMemories_[i].ref_ = devices[i];
-      deviceMemories_[i].value_ = NULL;
-    }
+    deviceMemories_[i].ref_ = devices[i];
+    deviceMemories_[i].value_ = NULL;
 
-    if (DISABLE_DEFERRED_ALLOC) {
+    if (!skipAlloc && ((devices.size() == 1) || DISABLE_DEFERRED_ALLOC)) {
       device::Memory* mem = getDeviceMemory(*devices[i]);
       if (NULL == mem) {
         LogPrintfError("Can't allocate memory size - 0x%08X bytes!", getSize());
@@ -447,7 +436,7 @@ void Buffer::initDeviceMemory() {
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
 }
 
-bool Buffer::create(void* initFrom, bool sysMemAlloc) {
+bool Buffer::create(void* initFrom, bool sysMemAlloc, bool skipAlloc) {
   if ((getMemFlags() & CL_MEM_EXTERNAL_PHYSICAL_AMD) && (initFrom != NULL)) {
     busAddress_ = *(reinterpret_cast<cl_bus_address_amd*>(initFrom));
     initFrom = NULL;
@@ -455,7 +444,7 @@ bool Buffer::create(void* initFrom, bool sysMemAlloc) {
     busAddress_.surface_bus_address = 0;
     busAddress_.marker_bus_address = 0;
   }
-  return Memory::create(initFrom, sysMemAlloc);
+  return Memory::create(initFrom, sysMemAlloc, skipAlloc);
 }
 
 bool Buffer::isEntirelyCovered(const Coord3D& origin, const Coord3D& region) const {

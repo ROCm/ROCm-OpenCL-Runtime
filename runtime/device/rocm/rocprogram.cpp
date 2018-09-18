@@ -312,10 +312,12 @@ std::string Program::preprocessorOptions(amd::option::Options* options) {
 
   // Set options for the standard device specific options
 
+#ifndef WITH_LIGHTNING_COMPILER
   optionsStr.append(" -D__AMD__=1");
 
   optionsStr.append(" -D__").append(device().info().name_).append("__=1");
   optionsStr.append(" -D__").append(device().info().name_).append("=1");
+#endif
 
   int major, minor;
   ::sscanf(device().info().version_, "OpenCL %d.%d ", &major, &minor);
@@ -328,6 +330,7 @@ std::string Program::preprocessorOptions(amd::option::Options* options) {
     optionsStr.append(" -D__IMAGE_SUPPORT__=1");
   }
 
+#ifndef WITH_LIGHTNING_COMPILER
   // This is just for legacy compiler code
   // All our devices support these options now
   if (options->oVariables->FastFMA) {
@@ -336,6 +339,7 @@ std::string Program::preprocessorOptions(amd::option::Options* options) {
   if (options->oVariables->FastFMAF) {
     optionsStr.append(" -DFP_FAST_FMAF=1");
   }
+#endif
 
   uint clcStd =
       (options->oVariables->CLStd[2] - '0') * 100 + (options->oVariables->CLStd[4] - '0') * 10;
@@ -531,8 +535,8 @@ aclType HSAILProgram::getCompilationStagesFromBinary(std::vector<aclType>& compl
 
 bool HSAILProgram::linkImpl(const std::vector<device::Program*>& inputPrograms,
                             amd::option::Options* options, bool createLibrary) {
-  std::vector<device::Program*>::const_iterator it = inputPrograms.begin();
-  std::vector<device::Program*>::const_iterator itEnd = inputPrograms.end();
+  auto it = inputPrograms.cbegin();
+  const auto itEnd = inputPrograms.cend();
   acl_error errorCode;
 
   // For each program we need to extract the LLVMIR and create
@@ -1062,15 +1066,17 @@ bool LightningProgram::linkImpl(amd::option::Options* options) {
       C->NewBufferReference(DT_LLVM_BC, (const char*)opencl_amdgcn, opencl_amdgcn_size);
     Data* ocml_bc = C->NewBufferReference(DT_LLVM_BC, (const char*)ocml_amdgcn, ocml_amdgcn_size);
     Data* ockl_bc = C->NewBufferReference(DT_LLVM_BC, (const char*)ockl_amdgcn, ockl_amdgcn_size);
+    Data* irif_bc = C->NewBufferReference(DT_LLVM_BC, (const char*)irif_amdgcn, irif_amdgcn_size);
 
-    if (!opencl_bc || !ocml_bc || !ockl_bc) {
+    if (!opencl_bc || !ocml_bc || !ockl_bc || !irif_bc) {
       buildLog_ += "Error: Failed to open the bitcode library.\n";
       return false;
     }
 
     inputs.push_back(opencl_bc);  // depends on oclm & ockl
-    inputs.push_back(ockl_bc);
-    inputs.push_back(ocml_bc);
+    inputs.push_back(ockl_bc);    // depends on irif
+    inputs.push_back(ocml_bc);    // depends on irif
+    inputs.push_back(irif_bc);
 
     // open the control functions
     auto isa_version = get_oclc_isa_version(dev().deviceInfo().gfxipVersion_);

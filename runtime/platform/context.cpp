@@ -18,7 +18,12 @@
 #include "CL/cl_dx9_media_sharing.h"
 #endif  //_WIN32
 
-#if defined(_WIN32)
+#if (!defined(BUILD_HSA_TARGET) && defined(WITH_HSA_DEVICE) && \
+      defined(WITH_AMDGPU_PRO)) || defined(_WIN32) || defined(WITH_PAL_DEVICE)
+#define WITH_LIQUID_FLASH 1
+#endif
+
+#ifdef WITH_LIQUID_FLASH 
 #include "lf.h"
 #endif
 
@@ -40,16 +45,10 @@ Context::Context(const std::vector<Device*>& devices, const Info& info)
     }
   }
   if (svmAllocDevice_.size() > 1) {
-    // make sure the CPU is the last device to do allocation.
-    if ((svmAllocDevice_.front()->type() == CL_DEVICE_TYPE_CPU)) {
-      std::swap(svmAllocDevice_.front(), svmAllocDevice_.back());
-    }
-
     uint isFirstDeviceFGSEnabled = svmAllocDevice_.front()->isFineGrainedSystem(true);
     for (auto& dev : svmAllocDevice_) {
       // allocation on fine - grained system incapable device first
-      if (isFirstDeviceFGSEnabled && (dev->type() == CL_DEVICE_TYPE_GPU) &&
-          (!(dev->isFineGrainedSystem(true)))) {
+      if (isFirstDeviceFGSEnabled && !dev->isFineGrainedSystem(true)) {
         std::swap(svmAllocDevice_.front(), dev);
         break;
       }
@@ -62,10 +61,9 @@ Context::~Context() {
 
   // Dissociate OCL context with any external device
   if (info_.flags_ & (GLDeviceKhr | D3D10DeviceKhr | D3D11DeviceKhr)) {
-    std::vector<Device*>::const_iterator it;
     // Loop through all devices
-    for (it = devices_.begin(); it != devices_.end(); it++) {
-      (*it)->unbindExternalDevice(info_.flags_, info_.hDev_, info_.hCtx_, VALIDATE_ONLY);
+    for (const auto& it : devices_) {
+      it->unbindExternalDevice(info_.flags_, info_.hDev_, info_.hCtx_, VALIDATE_ONLY);
     }
   }
 
@@ -79,7 +77,7 @@ Context::~Context() {
 
   std::for_each(devices_.begin(), devices_.end(), std::mem_fun(&Device::release));
 
-#if defined(_WIN32)
+#ifdef WITH_LIQUID_FLASH 
   lfTerminate();
 #endif
 }
@@ -218,10 +216,9 @@ int Context::create(const intptr_t* properties) {
   // Check if OCL context can be associated with any external device
   if (info_.flags_ & (D3D10DeviceKhr | D3D11DeviceKhr | GLDeviceKhr | D3D9DeviceKhr |
                       D3D9DeviceEXKhr | D3D9DeviceVAKhr)) {
-    std::vector<Device*>::const_iterator it;
     // Loop through all devices
-    for (it = devices_.begin(); it != devices_.end(); it++) {
-      if (!(*it)->bindExternalDevice(info_.flags_, info_.hDev_, info_.hCtx_, VALIDATE_ONLY)) {
+    for (const auto& it : devices_) {
+      if (!it->bindExternalDevice(info_.flags_, info_.hDev_, info_.hCtx_, VALIDATE_ONLY)) {
         result = CL_INVALID_VALUE;
       }
     }
@@ -261,9 +258,11 @@ int Context::create(const intptr_t* properties) {
       }
     }
   }
-#if defined(_WIN32)
+
+#ifdef WITH_LIQUID_FLASH 
   lfInit();
 #endif
+
   return result;
 }
 
@@ -288,49 +287,36 @@ void* Context::svmAlloc(size_t size, size_t alignment, cl_svm_mem_flags flags) {
     return NULL;
   }
 
-  if (svmAllocDevice_.front()->type() == CL_DEVICE_TYPE_CPU) {
-    return AlignedMemory::allocate(size, alignment);
-  } else {
-    void* svmPtrAlloced = NULL;
-    void* tempPtr = NULL;
+  void* svmPtrAlloced = NULL;
+  void* tempPtr = NULL;
 
-    for (const auto& dev : svmAllocDevice_) {
-      if (dev->type() == CL_DEVICE_TYPE_GPU) {
-        // check if the device support svm platform atomics,
-        // skipped allocation for platform atomics if not supported by this device
-        if ((flags & CL_MEM_SVM_ATOMICS) &&
-            !(dev->info().svmCapabilities_ & CL_DEVICE_SVM_ATOMICS)) {
-          continue;
-        }
-        svmPtrAlloced = dev->svmAlloc(*this, size, alignment, flags, svmPtrAlloced);
-        if (svmPtrAlloced == NULL) {
-          return NULL;
-        }
-      }
+  amd::ScopedLock lock(&ctxLock_);
+  for (const auto& dev : svmAllocDevice_) {
+    // check if the device support svm platform atomics,
+    // skipped allocation for platform atomics if not supported by this device
+    if ((flags & CL_MEM_SVM_ATOMICS) &&
+        !(dev->info().svmCapabilities_ & CL_DEVICE_SVM_ATOMICS)) {
+      continue;
     }
-    return svmPtrAlloced;
+    svmPtrAlloced = dev->svmAlloc(*this, size, alignment, flags, svmPtrAlloced);
+    if (svmPtrAlloced == NULL) {
+      return NULL;
+    }
   }
+  return svmPtrAlloced;
 }
 
 void Context::svmFree(void* ptr) const {
-  if (svmAllocDevice_.front()->type() == CL_DEVICE_TYPE_CPU) {
-    AlignedMemory::deallocate(ptr);
-    return;
-  }
-
+  amd::ScopedLock lock(&ctxLock_);
   for (const auto& dev : svmAllocDevice_) {
-    if (dev->type() == CL_DEVICE_TYPE_GPU) {
-      dev->svmFree(ptr);
-    }
+    dev->svmFree(ptr);
   }
   return;
 }
 
 bool Context::containsDevice(const Device* device) const {
-  std::vector<Device*>::const_iterator it;
-
-  for (it = devices_.begin(); it != devices_.end(); ++it) {
-    if (device == *it || (*it)->isAncestor(device)) {
+  for (const auto& it : devices_) {
+    if (device == it) {
       return true;
     }
   }
@@ -338,8 +324,8 @@ bool Context::containsDevice(const Device* device) const {
 }
 
 DeviceQueue* Context::defDeviceQueue(const Device& dev) const {
-  std::map<const Device*, DeviceQueueInfo>::const_iterator it = deviceQueues_.find(&dev);
-  if (it != deviceQueues_.end()) {
+  const auto it = deviceQueues_.find(&dev);
+  if (it != deviceQueues_.cend()) {
     return it->second.defDeviceQueue_;
   } else {
     return NULL;

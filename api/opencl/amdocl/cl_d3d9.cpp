@@ -16,6 +16,7 @@
 
 #define D3DFMT_NV_12 static_cast<D3DFORMAT>(MAKEFOURCC('N', 'V', '1', '2'))
 #define D3DFMT_YV_12 static_cast<D3DFORMAT>(MAKEFOURCC('Y', 'V', '1', '2'))
+#define D3DFMT_YUY2  static_cast<D3DFORMAT>(MAKEFOURCC('Y', 'U', 'Y', '2'))
 
 
 RUNTIME_ENTRY(cl_int, clGetDeviceIDsFromDX9MediaAdapterKHR,
@@ -100,7 +101,7 @@ RUNTIME_ENTRY(cl_int, clGetDeviceIDsFromDX9MediaAdapterKHR,
         break;
       }
 
-      std::vector<amd::Device*>::iterator it = compatible_devices.begin();
+      auto it = compatible_devices.cbegin();
       cl_uint compatible_count = std::min(num_entries, (cl_uint)compatible_devices.size());
 
       while (compatible_count--) {
@@ -182,9 +183,8 @@ RUNTIME_ENTRY_RET(cl_mem, clCreateFromDX9MediaSurfaceKHR,
   const std::vector<amd::Device*>& devices = as_amd(context)->devices();
   bool supportPass = false;
   bool sizePass = false;
-  std::vector<amd::Device*>::const_iterator it;
-  for (it = devices.begin(); it != devices.end(); ++it) {
-    if ((*it)->info().imageSupport_) {
+  for (const auto& it : devices) {
+    if (it->info().imageSupport_) {
       supportPass = true;
     }
   }
@@ -306,7 +306,6 @@ size_t D3D9Object::getElementBytes(D3DFORMAT d3d9Format, cl_uint plane) {
   switch (d3d9Format) {
     case D3DFMT_UNKNOWN:
     case D3DFMT_UYVY:
-    case D3DFMT_YUY2:
     case D3DFMT_DXT1:
     case D3DFMT_DXT2:
     case D3DFMT_DXT3:
@@ -372,6 +371,7 @@ size_t D3D9Object::getElementBytes(D3DFORMAT d3d9Format, cl_uint plane) {
     case D3DFMT_R8G8_B8G8:
     case D3DFMT_G8R8_G8B8:
     case D3DFMT_G16R16F:
+    case D3DFMT_YUY2:
       bytesPerPixel = 4;
       break;
 
@@ -459,6 +459,9 @@ void setObjDesc(amd::D3D9ObjDesc_t& objDesc, D3DSURFACE_DESC& resDesc, cl_uint p
       objDesc.surfRect_.top = 0;
       objDesc.surfRect_.right = resDesc.Width - 1;
       objDesc.surfRect_.bottom = resDesc.Height - 1;
+      if (resDesc.Format == D3DFMT_YUY2) {
+        objDesc.objSize_.Width >>= 1;
+      }
       break;
   }
 }
@@ -480,9 +483,8 @@ int D3D9Object::initD3D9Object(const Context& amdContext,
     return CL_INVALID_DX9_MEDIA_ADAPTER_KHR;  // Not supported yet
   }
 
-  std::vector<std::pair<TD3D9RESINFO, TD3D9RESINFO>>::iterator it;
-  for (it = resources_.begin(); it != resources_.end(); ++it) {
-    if ((*it).first.surfInfo.resource == cl_surf_info->resource && (*it).first.surfPlane == plane) {
+  for (const auto& it : resources_) {
+    if (it.first.surfInfo.resource == cl_surf_info->resource && it.first.surfPlane == plane) {
       return CL_INVALID_D3D9_RESOURCE_KHR;
     }
   }
@@ -515,12 +517,11 @@ int D3D9Object::initD3D9Object(const Context& amdContext,
   // first check if the format is NV12 or YV12, which we need special handling
   if (NULL == shared_handle) {
     bool found = false;
-    std::vector<std::pair<TD3D9RESINFO, TD3D9RESINFO>>::iterator it;
-    for (it = resources_.begin(); it != resources_.end(); ++it) {
-      if ((*it).first.surfInfo.resource == cl_surf_info->resource &&
-          (*it).first.surfPlane != plane) {
-        obj.handleShared_ = (*it).second.surfInfo.shared_handle;
-        obj.pD3D9Res_ = (*it).second.surfInfo.resource;
+    for (const auto& it : resources_) {
+      if (it.first.surfInfo.resource == cl_surf_info->resource &&
+          it.first.surfPlane != plane) {
+        obj.handleShared_ = it.second.surfInfo.shared_handle;
+        obj.pD3D9Res_ = it.second.surfInfo.resource;
         obj.pD3D9Res_->AddRef();
         obj.objDesc_ = obj.objDescOrig_;
         found = true;
@@ -563,7 +564,7 @@ int D3D9Object::initD3D9Object(const Context& amdContext,
   TD3D9RESINFO d3d9ObjShared = {{obj.pD3D9Res_, obj.handleShared_}, plane};
 
   if (errcode == CL_SUCCESS) {
-    resources_.push_back(std::make_pair(d3d9ObjOri, d3d9ObjShared));
+    resources_.push_back({d3d9ObjOri, d3d9ObjShared});
   }
 
   return errcode;
@@ -575,6 +576,9 @@ cl_uint D3D9Object::getMiscFlag() {
       break;
     case D3DFMT_YV_12:
       return 2;
+      break;
+    case D3DFMT_YUY2:
+      return 3;
       break;
     default:
       return 0;
@@ -684,7 +688,10 @@ cl_image_format D3D9Object::getCLFormatFromD3D9(D3DFORMAT d3d9Fmt, cl_uint plane
       fmt.image_channel_order = CL_R;
       fmt.image_channel_data_type = CL_UNORM_INT8;
       break;
-
+    case D3DFMT_YUY2:
+      fmt.image_channel_order = CL_RGBA;
+      fmt.image_channel_data_type = CL_UNSIGNED_INT8;
+      break;
     case D3DFMT_UNKNOWN:
     case D3DFMT_R8G8B8:
     case D3DFMT_R5G6B5:
@@ -707,7 +714,6 @@ cl_image_format D3D9Object::getCLFormatFromD3D9(D3DFORMAT d3d9Fmt, cl_uint plane
     case D3DFMT_A2W10V10U10:
     case D3DFMT_UYVY:
     case D3DFMT_R8G8_B8G8:
-    case D3DFMT_YUY2:
     case D3DFMT_G8R8_G8B8:
     case D3DFMT_DXT1:
     case D3DFMT_DXT2:
@@ -808,48 +814,6 @@ void Image2DD3D9::initDeviceMemory() {
   deviceMemories_ =
       reinterpret_cast<DeviceMemory*>(reinterpret_cast<char*>(this) + sizeof(Image2DD3D9));
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
-}
-
-bool Image2DD3D9::mapExtObjectInCQThread() {
-  void* pCpuMem = NULL;
-  HRESULT hr;
-  DWORD lockFlags = 0;
-
-  if (getMemFlags() & CL_MEM_READ_WRITE) {
-    lockFlags = 0;
-  } else if (getMemFlags() & CL_MEM_READ_ONLY) {
-    lockFlags = D3DLOCK_READONLY;
-  } else if (getMemFlags() & CL_MEM_WRITE_ONLY) {
-    lockFlags = D3DLOCK_DISCARD;
-  } else {
-    // Should not get here, the flags had been checked before
-    LogError("\nInvalid memrory flags");
-    return false;
-  }
-  ScopedLock sl(getResLock());
-
-  D3DLOCKED_RECT lockedRect;
-  hr = getD3D9Resource()->LockRect(&lockedRect, NULL, lockFlags);
-  if ((hr != D3D_OK) || !lockedRect.pBits) {
-    LogError("Cannot lock D3D9 surface for CPU access");
-    return false;
-  }
-
-  setHostMem(lockedRect.pBits);
-  return true;
-}
-
-bool Image2DD3D9::unmapExtObjectInCQThread() {
-  HRESULT hr;
-  ScopedLock sl(getResLock());
-  hr = getD3D9Resource()->UnlockRect();
-  if (hr != D3D_OK) {
-    LogError("Cannot unlock D3D9 surface");
-    return false;
-  }
-
-  setHostMem(NULL);
-  return true;
 }
 
 }  // namespace amd

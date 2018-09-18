@@ -30,6 +30,8 @@ static inline ROC_ARG_TYPE GetKernelArgType(const KernelArgMD& lcArg) {
       return ROC_ARGTYPE_IMAGE;
     case ValueKind::Sampler:
       return ROC_ARGTYPE_SAMPLER;
+    case ValueKind::Queue:
+      return ROC_ARGTYPE_QUEUE;
     case ValueKind::HiddenGlobalOffsetX:
       return ROC_ARGTYPE_HIDDEN_GLOBAL_OFFSET_X;
     case ValueKind::HiddenGlobalOffsetY:
@@ -78,6 +80,8 @@ static inline ROC_ARG_TYPE GetKernelArgType(const aclArgData* argInfo) {
       return ROC_ARGTYPE_IMAGE;
     case ARG_TYPE_SAMPLER:
       return ROC_ARGTYPE_SAMPLER;
+    case ARG_TYPE_QUEUE:
+      return ROC_ARGTYPE_QUEUE;
     case ARG_TYPE_ERROR:
     default:
       return ROC_ARGTYPE_ERROR;
@@ -187,7 +191,7 @@ static inline ROC_ADDRESS_QUALIFIER GetKernelAddrQual(const KernelArgMD& lcArg) 
   if (lcArg.mValueKind == ValueKind::DynamicSharedPointer) {
     return ROC_ADDRESS_LOCAL;
   } else if (lcArg.mValueKind == ValueKind::GlobalBuffer) {
-    if (lcArg.mAddrSpaceQual == AddressSpaceQualifier::Global) {
+    if (lcArg.mAddrSpaceQual == AddressSpaceQualifier::Global || lcArg.mAddrSpaceQual == AddressSpaceQualifier::Generic) {
       return ROC_ADDRESS_GLOBAL;
     } else if (lcArg.mAddrSpaceQual == AddressSpaceQualifier::Constant) {
       return ROC_ADDRESS_CONSTANT;
@@ -417,6 +421,8 @@ static inline clk_value_type_t GetOclType(const Kernel::Argument* arg) {
     }
   } else if (arg->type_ == ROC_ARGTYPE_SAMPLER) {
     return T_SAMPLER;
+  } else if (arg->type_ == ROC_ARGTYPE_QUEUE) {
+    return T_QUEUE;
   } else {
     return T_VOID;
   }
@@ -545,28 +551,28 @@ void HSAILKernel::initArguments(const aclArgData* aclArg) {
     desc.typeQualifier_ = GetOclTypeQual(aclArg);
     desc.typeName_ = arg->typeName_.c_str();
 
-    // Make a check if it is local or global
-    if (desc.addressQualifier_ == CL_KERNEL_ARG_ADDRESS_LOCAL) {
-      desc.size_ = 0;
-    } else {
-      desc.size_ = arg->size_;
+    // set image related flags
+    if (arg->type_ == ROC_ARGTYPE_IMAGE) {
+      flags_.imageEnable_ = true;
+      if (desc.accessQualifier_ == CL_KERNEL_ARG_ACCESS_WRITE_ONLY ||
+          desc.accessQualifier_ == CL_KERNEL_ARG_ACCESS_READ_WRITE) {
+        flags_.imageWrite_ = true;
+      }
     }
+    desc.size_ = arg->size_;
 
     // Make offset alignment to match CPU metadata, since
     // in multidevice config abstraction layer has a single signature
     // and CPU sends the parameters as they are allocated in memory
     size_t size = desc.size_;
-    if (size == 0) {
-      // Local memory for CPU
-      size = sizeof(cl_mem);
-    }
+
     offset = amd::alignUp(offset, std::min(size, size_t(16)));
     desc.offset_ = offset;
     offset += amd::alignUp(size, sizeof(uint32_t));
 
     params.push_back(desc);
   }
-  createSignature(params);
+  createSignature(params, params.size(), amd::KernelSignature::ABIVersion_0);
 }
 #endif // defined(WITH_COMPILER_LIB)
 
@@ -615,29 +621,28 @@ void LightningKernel::initArguments(const KernelMD& kernelMD) {
     desc.typeQualifier_ = GetOclTypeQual(lcArg);
     desc.typeName_ = lcArg.mTypeName.c_str();
 
-    // Make a check if it is local or global
-    if (desc.addressQualifier_ == CL_KERNEL_ARG_ADDRESS_LOCAL) {
-      desc.size_ = 0;
-    } else {
-      desc.size_ = arg->size_;
+    // set image related flags
+    if (arg->type_ == ROC_ARGTYPE_IMAGE) {
+      flags_.imageEnable_ = true;
+      if (desc.accessQualifier_ == CL_KERNEL_ARG_ACCESS_WRITE_ONLY ||
+          desc.accessQualifier_ == CL_KERNEL_ARG_ACCESS_READ_WRITE) {
+        flags_.imageWrite_ = true;
+      }
     }
+    desc.size_ = arg->size_;
 
     // Make offset alignment to match CPU metadata, since
     // in multidevice config abstraction layer has a single signature
     // and CPU sends the parameters as they are allocated in memory
     size_t size = desc.size_;
-    if (size == 0) {
-      // Local memory for CPU
-      size = sizeof(cl_mem);
-    }
+
     offset = (size_t)amd::alignUp(offset, std::min(size, size_t(16)));
     desc.offset_ = offset;
     offset += amd::alignUp(size, sizeof(uint32_t));
 
     params.push_back(desc);
   }
-
-  createSignature(params);
+  createSignature(params, params.size(), amd::KernelSignature::ABIVersion_0);
 }
 #endif  // defined(WITH_LIGHTNING_COMPILER)
 
@@ -698,6 +703,43 @@ bool LightningKernel::init() {
 
   if (!kernelMD->mAttrs.mVecTypeHint.empty()) {
     workGroupInfo_.compileVecTypeHint_ = kernelMD->mAttrs.mVecTypeHint.c_str();
+  }
+
+  if (!kernelMD->mAttrs.mRuntimeHandle.empty()) {
+    hsa_agent_t             agent = program_->hsaDevice();
+    hsa_executable_symbol_t kernelSymbol;
+    hsa_status_t            status;
+    int                     variable_size;
+    uint64_t                variable_address;
+
+    // Only kernels that could be enqueued by another kernel has the RuntimeHandle metadata. The RuntimeHandle
+    // metadata is a string that represents a variable from which the library code can retrieve the kernel code
+    // object handle of such a kernel. The address of the variable and the kernel code object handle are known
+    // only after the hsa executable is loaded. The below code copies the kernel code object handle to the
+    // address of the variable.
+
+    status = hsa_executable_get_symbol_by_name(program_->hsaExecutable(), kernelMD->mAttrs.mRuntimeHandle.c_str(),
+                                               &agent, &kernelSymbol);
+    if (status != HSA_STATUS_SUCCESS) {
+      return false;
+    }
+
+    status = hsa_executable_symbol_get_info(kernelSymbol, HSA_EXECUTABLE_SYMBOL_INFO_VARIABLE_SIZE,
+                                            &variable_size);
+    if (status != HSA_STATUS_SUCCESS) {
+      return false;
+    }
+
+    status = hsa_executable_symbol_get_info(kernelSymbol, HSA_EXECUTABLE_SYMBOL_INFO_VARIABLE_ADDRESS,
+                                            &variable_address);
+    if (status != HSA_STATUS_SUCCESS) {
+      return false;
+    }
+
+    status = hsa_memory_copy(reinterpret_cast<void*>(variable_address), &kernelCodeHandle_, variable_size);
+    if (status != HSA_STATUS_SUCCESS) {
+      return false;
+    }
   }
 
   uint32_t wavefront_size = 0;

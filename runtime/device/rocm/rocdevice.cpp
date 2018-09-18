@@ -92,6 +92,8 @@ static HsaDeviceId getHsaDeviceId(hsa_agent_t device, uint32_t& pci_id) {
       return HSA_RAVEN_ID;
     case 904:
       return HSA_VEGA12_ID;
+    case 906:
+      return HSA_VEGA20_ID;
     default:
       return HSA_INVALID_DEVICE_ID;
   }
@@ -558,6 +560,8 @@ bool Device::init() {
   return true;
 }
 
+extern const char* SchedulerSourceCode;
+
 void Device::tearDown() {
   NullDevice::tearDown();
   hsa_shut_down();
@@ -609,7 +613,12 @@ bool Device::create() {
     return false;
   }
 
+  const char* scheduler = nullptr;
+
 #if defined(WITH_LIGHTNING_COMPILER)
+  std::string sch = SchedulerSourceCode;
+  scheduler = sch.c_str();
+
   //  create compilation object with cache support
   int gfxipMajor = deviceInfo_.gfxipVersion_ / 100;
   int gfxipMinor = deviceInfo_.gfxipVersion_ / 10 % 10;
@@ -645,7 +654,7 @@ bool Device::create() {
 
   blitProgram_ = new BlitProgram(context_);
   // Create blit programs
-  if (blitProgram_ == nullptr || !blitProgram_->create(this)) {
+  if (blitProgram_ == nullptr || !blitProgram_->create(this, scheduler)) {
     delete blitProgram_;
     blitProgram_ = nullptr;
     LogError("Couldn't create blit kernels!");
@@ -847,13 +856,19 @@ bool Device::populateOCLDeviceConstants() {
 
   if (HSA_STATUS_SUCCESS !=
       hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MAX_CLOCK_FREQUENCY,
-                         &info_.maxClockFrequency_)) {
+                         &info_.maxEngineClockFrequency_)) {
     return false;
   }
 
   //TODO: add the assert statement for Raven
   if (deviceInfo_.gfxipVersion_ != 902) {
-    assert(info_.maxClockFrequency_ > 0);
+    assert(info_.maxEngineClockFrequency_ > 0);
+  }
+
+  if (HSA_STATUS_SUCCESS !=
+      hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MEMORY_MAX_FREQUENCY,
+          &info_.maxMemoryClockFrequency_)) {
+      return false;
   }
 
   if (HSA_STATUS_SUCCESS !=
@@ -1157,10 +1172,17 @@ bool Device::populateOCLDeviceConstants() {
       return false;
     }
     if (HSA_STATUS_SUCCESS !=
-        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MEMORY_WIDTH, &info_.globalMemChannels_)) {
+        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MEMORY_WIDTH, &info_.vramBusBitWidth_)) {
       return false;
     }
-    info_.globalMemChannels_ /= 32;
+    uint32_t cache_sizes[4];
+    /* FIXIT [skudchad] -  Seems like hardcoded in HSA backend so 0*/
+    if (HSA_STATUS_SUCCESS !=
+        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AGENT_INFO_CACHE_SIZE, cache_sizes)) {
+        return false;
+    }
+    info_.l2CacheSize_ = cache_sizes[1];
+    info_.timeStampFrequency_ = 1000000;
     info_.globalMemChannelBanks_ = 4;
     info_.globalMemChannelBankWidth_ = deviceInfo_.memChannelBankWidth_;
     info_.localMemSizePerCU_ = deviceInfo_.localMemSizePerCU_;
@@ -1180,6 +1202,13 @@ bool Device::populateOCLDeviceConstants() {
   info_.maxPipePacketSize_ = info_.maxMemAllocSize_;
   info_.maxPipeActiveReservations_ = 16;
   info_.maxPipeArgs_ = 16;
+
+  info_.queueOnDeviceProperties_ =
+      CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE;
+  info_.queueOnDevicePreferredSize_ = 256 * Ki;
+  info_.queueOnDeviceMaxSize_ = 8 * Mi;
+  info_.maxOnDeviceQueues_ = 1;
+  info_.maxOnDeviceEvents_ = settings().numDeviceEvents_;
 
   return true;
 }
@@ -1239,14 +1268,11 @@ bool Device::bindExternalDevice(uint flags, void* const gfxDevice[], void* gfxCo
 
   mesa_glinterop_device_info info;
   info.size = sizeof(mesa_glinterop_device_info);
-  MesaInterop temp;
-  if (!temp.Bind(kind, display, context)) {
-    assert(false && "Failed mesa interop bind.");
+  if (!MesaInterop::Init(kind)) {
     return false;
   }
 
-  if (!temp.GetInfo(info)) {
-    assert(false && "Failed to get mesa interop device info.");
+  if (!MesaInterop::GetInfo(info, kind, display, context)) {
     return false;
   }
 
@@ -1256,8 +1282,6 @@ bool Device::bindExternalDevice(uint flags, void* const gfxDevice[], void* gfxCo
   match &= info_.deviceTopology_.pcie.function == info.pci_function;
   match &= info_.vendorId_ == info.vendor_id;
   match &= deviceInfo_.pciDeviceId_ == info.device_id;
-
-  if (!validateOnly) mesa_ = temp;
 
   return match;
 #endif
@@ -1269,7 +1293,6 @@ bool Device::unbindExternalDevice(uint flags, void* const gfxDevice[], void* gfx
   return false;
 #else
   if ((flags & amd::Context::GLDeviceKhr) == 0) return false;
-  if (!validateOnly) mesa_.Unbind();
   return true;
 #endif
 }
@@ -1504,7 +1527,7 @@ void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_
     if (ptr != nullptr) {
       // Copy paste from ORCA code.
       // create a hidden buffer, which will allocated on the device later
-      mem = new (context) amd::Buffer(context, CL_MEM_USE_HOST_PTR, size, ptr);
+      mem = new (context) amd::Buffer(context, (CL_MEM_USE_HOST_PTR | (flags & 0xFFFF0000)), size, ptr);
       if (mem == nullptr) {
         LogError("failed to create a svm mem object!");
         return nullptr;
@@ -1517,7 +1540,7 @@ void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_
       }
 
       // add the information to context so that we can use it later.
-      amd::SvmManager::AddSvmBuffer(ptr, mem);
+      amd::MemObjMap::AddMemObj(ptr, mem);
 
       return ptr;
     } else {
@@ -1526,7 +1549,7 @@ void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_
   } else {
     // Copy paste from ORCA code.
     // Find the existing amd::mem object
-    mem = amd::SvmManager::FindSvmBuffer(svmPtr);
+    mem = amd::MemObjMap::FindMemObj(svmPtr);
 
     if (nullptr == mem) {
       return nullptr;
@@ -1538,10 +1561,10 @@ void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_
 
 void Device::svmFree(void* ptr) const {
   amd::Memory* svmMem = nullptr;
-  svmMem = amd::SvmManager::FindSvmBuffer(ptr);
+  svmMem = amd::MemObjMap::FindMemObj(ptr);
   if (nullptr != svmMem) {
     svmMem->release();
-    amd::SvmManager::RemoveSvmBuffer(ptr);
+    amd::MemObjMap::RemoveMemObj(ptr);
     hostFree(ptr);
   }
 }

@@ -213,7 +213,16 @@ bool Memory::createInteropBuffer(GLenum targetType, int miplevel) {
   in.out_driver_data_size = MaxMetadataSizeBytes;
   in.out_driver_data = &amdImageDesc_->data[0];
 
-  if (!dev().mesa().Export(in, out)) return false;
+  const auto& glenv = owner()->getContext().glenv();
+  if (glenv->isEGL()) {
+    if (!MesaInterop::Export(in, out, MesaInterop::MESA_INTEROP_EGL, glenv->getEglDpy(),
+                             glenv->getEglOrigCtx()))
+      return false;
+  } else {
+    if (!MesaInterop::Export(in, out, MesaInterop::MESA_INTEROP_GLX, glenv->getDpy(),
+                             glenv->getOrigCtx()))
+      return false;
+  }
 
   size_t size;
   size_t metadata_size = 0;
@@ -699,7 +708,7 @@ bool Buffer::create() {
       // data transfer to the view of the buffer.
       amd::Buffer* bufferView = new (owner()->getContext())
           amd::Buffer(*owner(), 0, owner()->getOrigin(), owner()->getSize());
-      bufferView->create();
+      bufferView->create(nullptr, false, true);
 
       roc::Buffer* devBufferView = new roc::Buffer(dev_, *bufferView);
       devBufferView->deviceMemory_ = deviceMemory_;
@@ -893,14 +902,21 @@ bool Image::createInteropImage() {
     return false;
   }
 
+  originalDeviceMemory_ = deviceMemory_;
+
+  if(obj->getGLTarget() == GL_TEXTURE_BUFFER) {
+    hsa_status_t err =
+        hsa_ext_image_create(dev().getBackendDevice(), &imageDescriptor_,
+                             originalDeviceMemory_, permission_, &hsaImageObject_);
+    return (err == HSA_STATUS_SUCCESS);
+  }
+
   image_metadata desc;
   if (!desc.create(amdImageDesc_)) return false;
 
   if (!desc.setMipLevel(obj->getGLMipLevel())) return false;
 
   if (obj->getGLTarget() == GL_TEXTURE_CUBE_MAP) desc.setFace(obj->getCubemapFace());
-
-  originalDeviceMemory_ = deviceMemory_;
 
   hsa_status_t err =
       hsa_amd_image_create(dev().getBackendDevice(), &imageDescriptor_, amdImageDesc_,
@@ -991,6 +1007,10 @@ bool Image::createView(const Memory& parent) {
   kind_ = parent.getKind();
   version_ = parent.version();
 
+  if (parent.isHostMemDirectAccess()) {
+    flags_ |= HostMemoryDirectAccess;
+  }
+
   hsa_status_t status;
   if (linearLayout) {
     size_t rowPitch;
@@ -1064,14 +1084,18 @@ void* Image::allocMapTarget(const amd::Coord3D& origin, const amd::Coord3D& regi
 
     pHostMem = mapMemory_->getHostMem();
 
-    *rowPitch = region[0] * elementSize;
+    size_t rowPitchTemp = 0;
+    if (rowPitch != nullptr) {
+      *rowPitch = region[0] * elementSize;
+      rowPitchTemp = *rowPitch;
+    }
 
     size_t slicePitchTmp = 0;
 
     if (imageDescriptor_.geometry == HSA_EXT_IMAGE_GEOMETRY_1DA) {
-      slicePitchTmp = *rowPitch;
+      slicePitchTmp = rowPitchTemp;
     } else {
-      slicePitchTmp = *rowPitch * region[1];
+      slicePitchTmp = rowPitchTemp * region[1];
     }
     if (slicePitch != nullptr) {
       *slicePitch = slicePitchTmp;
@@ -1086,7 +1110,10 @@ void* Image::allocMapTarget(const amd::Coord3D& origin, const amd::Coord3D& regi
   // Adjust offset with Z dimension
   offset += image->getSlicePitch() * origin[2];
 
-  *rowPitch = image->getRowPitch();
+  if (rowPitch != nullptr) {
+    *rowPitch = image->getRowPitch();
+  }
+
   if (slicePitch != nullptr) {
     *slicePitch = image->getSlicePitch();
   }

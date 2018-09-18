@@ -24,9 +24,8 @@ static amd::Program* createProgram(cl_context context, cl_uint num_devices,
   // Add programs for all devices in the context.
   if (device_list == NULL) {
     const std::vector<amd::Device*>& devices = as_amd(context)->devices();
-    std::vector<amd::Device*>::const_iterator it;
-    for (it = devices.begin(); it != devices.end(); ++it) {
-      if (program->addDeviceProgram(**it) == CL_OUT_OF_HOST_MEMORY) {
+    for (const auto& it : devices) {
+      if (program->addDeviceProgram(*it) == CL_OUT_OF_HOST_MEMORY) {
         *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
         program->release();
         return NULL;
@@ -142,9 +141,8 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithSource,
 
   // Add programs for all devices in the context.
   const std::vector<amd::Device*>& devices = as_amd(context)->devices();
-  std::vector<amd::Device*>::const_iterator it;
-  for (it = devices.begin(); it != devices.end(); ++it) {
-    if (program->addDeviceProgram(**it) == CL_OUT_OF_HOST_MEMORY) {
+  for (const auto& it : devices) {
+    if (program->addDeviceProgram(*it) == CL_OUT_OF_HOST_MEMORY) {
       *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
       program->release();
       return (cl_program)0;
@@ -204,9 +202,8 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithIL,
 
   // Add programs for all devices in the context.
   const std::vector<amd::Device*>& devices = as_amd(context)->devices();
-  std::vector<amd::Device*>::const_iterator it;
-  for (it = devices.begin(); it != devices.end(); ++it) {
-    if (program->addDeviceProgram(**it, il, length) == CL_OUT_OF_HOST_MEMORY) {
+  for (const auto& it : devices) {
+    if (program->addDeviceProgram(*it, il, length) == CL_OUT_OF_HOST_MEMORY) {
       *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
       program->release();
       return (cl_program)0;
@@ -368,9 +365,8 @@ RUNTIME_ENTRY_RET(cl_program, clCreateProgramWithAssemblyAMD,
 
   // Add programs for all devices in the context.
   const std::vector<amd::Device*>& devices = as_amd(context)->devices();
-  std::vector<amd::Device*>::const_iterator it;
-  for (it = devices.begin(); it != devices.end(); ++it) {
-    if (program->addDeviceProgram(**it) == CL_OUT_OF_HOST_MEMORY) {
+  for (const auto& it : devices) {
+    if (program->addDeviceProgram(*it) == CL_OUT_OF_HOST_MEMORY) {
       *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
       program->release();
       return (cl_program)0;
@@ -964,9 +960,8 @@ RUNTIME_ENTRY(cl_int, clGetProgramInfo,
       *not_null(param_value_size_ret) = valueSize;
       if (param_value != NULL) {
         cl_device_id* device_list = (cl_device_id*)param_value;
-        amd::Program::devicelist_t::const_iterator it;
-        for (it = devices.begin(); it != devices.end(); ++it) {
-          *device_list++ = const_cast<cl_device_id>(as_cl(*it));
+        for (const auto& it : devices) {
+          *device_list++ = const_cast<cl_device_id>(as_cl(it));
         }
         if (param_value_size > valueSize) {
           ::memset(static_cast<address>(param_value) + valueSize, '\0',
@@ -991,9 +986,8 @@ RUNTIME_ENTRY(cl_int, clGetProgramInfo,
       *not_null(param_value_size_ret) = valueSize;
       if (param_value != NULL) {
         size_t* binary_sizes = (size_t*)param_value;
-        amd::Program::devicelist_t::const_iterator it;
-        for (it = devices.begin(); it != devices.end(); ++it) {
-          *binary_sizes++ = amdProgram->getDeviceProgram(**it)->binary().second;
+        for (const auto& it : devices) {
+          *binary_sizes++ = amdProgram->getDeviceProgram(*it)->binary().second;
         }
         if (param_value_size > valueSize) {
           ::memset(static_cast<address>(param_value) + valueSize, '\0',
@@ -1014,9 +1008,8 @@ RUNTIME_ENTRY(cl_int, clGetProgramInfo,
       *not_null(param_value_size_ret) = valueSize;
       if (param_value != NULL) {
         char** binaries = (char**)param_value;
-        amd::Program::devicelist_t::const_iterator it;
-        for (it = devices.begin(); it != devices.end(); ++it) {
-          const device::Program::binary_t& binary = amdProgram->getDeviceProgram(**it)->binary();
+        for (const auto& it : devices) {
+          const device::Program::binary_t& binary = amdProgram->getDeviceProgram(*it)->binary();
           // If an entry value in the array is NULL,
           // then runtime should skip copying the program binary
           if (*binaries != NULL) {
@@ -1376,9 +1369,8 @@ RUNTIME_ENTRY(cl_int, clCreateKernelsInProgram, (cl_program program, cl_uint num
   const amd::Program::symbols_t& symbols = as_amd(program)->symbols();
   cl_kernel* result = kernels;
 
-  amd::Program::symbols_t::const_iterator it;
-  for (it = symbols.begin(); it != symbols.end(); ++it) {
-    amd::Kernel* kernel = new amd::Kernel(*as_amd(program), it->second, it->first);
+  for (const auto& it : symbols) {
+    amd::Kernel* kernel = new amd::Kernel(*as_amd(program), it.second, it.first);
     if (kernel == NULL) {
       while (--result >= kernels) {
         as_amd(*result)->release();
@@ -1542,18 +1534,18 @@ RUNTIME_ENTRY(cl_int, clSetKernelArg,
     return CL_INVALID_ARG_INDEX;
   }
 
-  as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
-
   const amd::KernelParameterDescriptor& desc = signature.at(arg_index);
-  const bool is_local = desc.size_ == 0;
+  const bool is_local = (desc.addressQualifier_ == CL_KERNEL_ARG_ADDRESS_LOCAL);
   if (((arg_value == NULL) && !is_local && (desc.type_ != T_POINTER)) ||
       ((arg_value != NULL) && is_local)) {
+    as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
     return CL_INVALID_ARG_VALUE;
   }
   if (!is_local && (desc.type_ == T_POINTER) && (arg_value != NULL)) {
     cl_mem memObj = *static_cast<const cl_mem*>(arg_value);
     amd::RuntimeObject* pObject = as_amd(memObj);
     if (NULL != memObj && amd::RuntimeObject::ObjectTypeMemory != pObject->objectType()) {
+      as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
       return CL_INVALID_MEM_OBJECT;
     }
   } else if ((desc.type_ == T_SAMPLER) && !is_valid(*static_cast<const cl_sampler*>(arg_value))) {
@@ -1561,13 +1553,16 @@ RUNTIME_ENTRY(cl_int, clSetKernelArg,
   } else if (desc.type_ == T_QUEUE) {
     cl_command_queue queue = *static_cast<const cl_command_queue*>(arg_value);
     if (!is_valid(queue)) {
+      as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
       return CL_INVALID_DEVICE_QUEUE;
     }
     if (NULL == as_amd(queue)->asDeviceQueue()) {
+      as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
       return CL_INVALID_DEVICE_QUEUE;
     }
   }
   if ((!is_local && (arg_size != desc.size_)) || (is_local && (arg_size == 0))) {
+    as_amd(kernel)->parameters().reset(static_cast<size_t>(arg_index));
     return CL_INVALID_ARG_SIZE;
   }
 
@@ -1921,11 +1916,8 @@ RUNTIME_ENTRY(cl_int, clGetKernelSubGroupInfo,
         workGroupSize *= ((size_t*)input_value)[i];
       }
 
-      // Get the subgroup size. CPU devices only have one subgroup
-      // per workgroup. GPU devices sub-groups are wavefronts.
-      size_t subGroupSize = as_amd(device)->type() == CL_DEVICE_TYPE_CPU
-          ? workGroupSize
-          : as_amd(device)->info().wavefrontWidth_;
+      // Get the subgroup size. GPU devices sub-groups are wavefronts.
+      size_t subGroupSize = as_amd(device)->info().wavefrontWidth_;
 
       size_t numSubGroups = (workGroupSize + subGroupSize - 1) / subGroupSize;
 
@@ -1941,8 +1933,7 @@ RUNTIME_ENTRY(cl_int, clGetKernelSubGroupInfo,
     }
     case CL_KERNEL_MAX_NUM_SUB_GROUPS: {
       size_t waveSize = as_amd(device)->info().wavefrontWidth_;
-      size_t numSubGroups = as_amd(device)->type() == CL_DEVICE_TYPE_CPU
-          ? 1 : (devKernel->workGroupInfo()->size_  + waveSize - 1) / waveSize;
+      size_t numSubGroups = (devKernel->workGroupInfo()->size_  + waveSize - 1) / waveSize;
       return amd::clGetInfo(numSubGroups, param_value_size, param_value, param_value_size_ret);
     }
     case CL_KERNEL_LOCAL_SIZE_FOR_SUB_GROUP_COUNT: {
@@ -1959,19 +1950,10 @@ RUNTIME_ENTRY(cl_int, clGetKernelSubGroupInfo,
       *not_null(param_value_size_ret) = param_value_size;
 
       size_t localSize;
-      if (as_amd(device)->type() == CL_DEVICE_TYPE_CPU) {
-        if (numSubGroups != 1) {
-          ::memset(param_value, '\0', dims * sizeof(size_t));
-          return CL_SUCCESS;
-        }
-        localSize = devKernel->workGroupInfo()->size_;
-      }
-      else {
-        localSize = numSubGroups * as_amd(device)->info().wavefrontWidth_;
-        if (localSize > devKernel->workGroupInfo()->size_) {
-          ::memset(param_value, '\0', dims * sizeof(size_t));
-          return CL_SUCCESS;
-        }
+      localSize = numSubGroups * as_amd(device)->info().wavefrontWidth_;
+      if (localSize > devKernel->workGroupInfo()->size_) {
+        ::memset(param_value, '\0', dims * sizeof(size_t));
+        return CL_SUCCESS;
       }
 
       switch (dims) {

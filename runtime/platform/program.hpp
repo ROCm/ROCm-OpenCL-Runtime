@@ -35,11 +35,10 @@ namespace amd {
 //! A kernel function symbol
 class Symbol : public HeapObject {
  public:
-  typedef std::map<const Device*, const device::Kernel*> devicekernels_t;
+  typedef std::unordered_map<const Device*, const device::Kernel*> devicekernels_t;
 
  private:
   devicekernels_t deviceKernels_;    //! All device kernels objects.
-  devicekernels_t devKernelsNoOpt_;  //! Kernel objects without optimization
   KernelSignature signature_;        //! Kernel signature.
 
  public:
@@ -48,13 +47,11 @@ class Symbol : public HeapObject {
 
   //! Set the entry point and check or set the signature.
   bool setDeviceKernel(const Device& device,        //!< Device object.
-                       const device::Kernel* func,  //!< Device kernel object.
-                       bool noAlias = true          //!< No-alias optimization
+                       const device::Kernel* func   //!< Device kernel object.
                        );
 
   //! Return the device kernel.
-  const device::Kernel* getDeviceKernel(const Device& device,  //!< Device object.
-                                        bool noAlias = true    //!< No-alias optimization
+  const device::Kernel* getDeviceKernel(const Device& device //!< Device object.
                                         ) const;
 
   //! Return this Symbol's signature.
@@ -68,9 +65,9 @@ class Program : public RuntimeObject {
  public:
   typedef std::pair<uint8_t*, size_t> binary_t;
   typedef std::set<Device const*> devicelist_t;
-  typedef std::map<Device const*, binary_t> devicebinary_t;
-  typedef std::map<Device const*, device::Program*> deviceprograms_t;
-  typedef std::map<std::string, Symbol> symbols_t;
+  typedef std::unordered_map<Device const*, binary_t> devicebinary_t;
+  typedef std::unordered_map<Device const*, device::Program*> deviceprograms_t;
+  typedef std::unordered_map<std::string, Symbol> symbols_t;
 
   enum Language {
     Binary = 0,
@@ -152,7 +149,7 @@ class Program : public RuntimeObject {
   const Symbol* findSymbol(const char* name) const;
 
   //! Return the binary image.
-  const binary_t& binary(const Device& device) { return binary_[&device.rootDevice()]; }
+  const binary_t& binary(const Device& device) { return binary_[&device]; }
 
   //! Return the program kernel names
   const std::string& kernelNames() const { return kernelNames_; }

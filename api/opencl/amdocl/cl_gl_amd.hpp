@@ -131,10 +131,6 @@ public:
     virtual ~BufferGL() {}
 
     virtual BufferGL* asBufferGL() { return this; }
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 };
 
 
@@ -172,10 +168,6 @@ public:
     }
 
     virtual ~ImageGL() {}
-
-    //! For CPU device only!
-    virtual bool mapExtObjectInCQThread(void);
-    virtual bool unmapExtObjectInCQThread(void);
 
 protected:
     //! Initializes the device memory array which is nested
@@ -327,6 +319,9 @@ public:
     Display* getIntDpy() const {return intDpy_;}
     GLXDrawable getIntDrawable() const {return intDrawable_;}
     GLXContext getIntCtx() const {return intCtx_;}
+
+    EGLDisplay getEglDpy() const { return eglDisplay_; }
+    EGLContext getEglOrigCtx() const { return eglOriginalContext_; }
 #endif //!_WIN32
 
     // Initialize GL dynamic library and function pointers

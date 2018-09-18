@@ -10,6 +10,10 @@
 #include <atomic>
 #include <string>
 
+#ifdef _WIN32
+#include <intrin.h>
+#endif
+
 namespace amd {
 
 /*! \addtogroup Utils Utilities

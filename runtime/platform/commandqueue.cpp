@@ -31,14 +31,28 @@ HostQueue::HostQueue(Context& context, Device& device, cl_command_queue_properti
 
 bool HostQueue::terminate() {
   if (Os::isThreadAlive(thread_)) {
-    // Make sure all the commands are finished on the device.
-    finish();
+    Command* marker = nullptr;
 
-    // Kill the command queue loop.
-    thread_.acceptingCommands_ = false;
+    // Send a finish if the queue is still accepting commands.
+    { ScopedLock sl(queueLock_);
+      if (thread_.acceptingCommands_) {
+        marker = new Marker(*this, false);
+        if (marker != nullptr) {
+          append(*marker);
+          queueLock_.notify();
+        }
+      }
+    }
+    if (marker != nullptr) {
+      marker->awaitCompletion();
+      marker->release();
+    }
 
     // Wake-up the command loop, so it can exit
-    flush();
+    { ScopedLock sl(queueLock_);
+      thread_.acceptingCommands_ = false;
+      queueLock_.notify();
+    }
 
     // FIXME_lmoriche: fix termination handshake
     while (thread_.state() < Thread::FINISHED) {
@@ -96,15 +110,14 @@ void HostQueue::loop(device::VirtualDevice* virtualDevice) {
 
     // Process the command's event wait list.
     const Command::EventWaitList& events = command->eventWaitList();
-    Command::EventWaitList::const_iterator it;
     bool dependencyFailed = false;
 
-    for (it = events.begin(); it != events.end(); ++it) {
+    for (const auto& it : events) {
       // Only wait if the command is enqueued into another queue.
-      if ((*it)->command().queue() != this) {
+      if (it->command().queue() != this) {
         virtualDevice->flush(head, true);
         tail = head = NULL;
-        dependencyFailed |= !(*it)->awaitCompletion();
+        dependencyFailed |= !it->awaitCompletion();
       }
     }
 
