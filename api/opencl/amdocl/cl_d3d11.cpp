@@ -16,8 +16,6 @@
 #include <cstring>
 #include <utility>
 
-#define DXGI_FORMAT_NV12 103
-
 /*! \addtogroup API
  *  @{
  *
@@ -127,7 +125,7 @@ RUNTIME_ENTRY(cl_int, clGetDeviceIDsFromD3D11KHR,
         break;
       }
 
-      std::vector<amd::Device*>::iterator it = compatible_devices.begin();
+      auto it = compatible_devices.cbegin();
       cl_uint compatible_count = std::min(num_entries, (cl_uint)compatible_devices.size());
 
       while (compatible_count--) {
@@ -300,9 +298,8 @@ RUNTIME_ENTRY_RET(cl_mem, clCreateImageFromD3D11Resource,
   const std::vector<amd::Device*>& devices = as_amd(context)->devices();
   bool supportPass = false;
   bool sizePass = false;
-  std::vector<amd::Device*>::const_iterator it;
-  for (it = devices.begin(); it != devices.end(); ++it) {
-    if ((*it)->info().imageSupport_) {
+  for (const auto& it : devices) {
+    if (it->info().imageSupport_) {
       supportPass = true;
     }
   }
@@ -597,8 +594,12 @@ size_t D3D11Object::getResourceByteSize() {
 }
 
 cl_uint D3D11Object::getMiscFlag() {
-  if (objDesc_.dxgiFormat_ == DXGI_FORMAT_NV12) {
+  if ((objDesc_.dxgiFormat_ == DXGI_FORMAT_NV12) ||
+      (objDesc_.dxgiFormat_ == DXGI_FORMAT_P010)) {
     return 1;
+  }
+  else if (objDesc_.dxgiFormat_ == DXGI_FORMAT_YUY2) {
+    return 3;
   }
   return 0;
 }
@@ -610,10 +611,9 @@ int D3D11Object::initD3D11Object(const Context& amdContext, ID3D11Resource* pRes
   ScopedLock sl(resLock_);
 
   // Check if this ressource has already been used for interop
-  std::vector<std::pair<void*, std::pair<UINT, UINT>>>::iterator it;
-  for (it = resources_.begin(); it != resources_.end(); ++it) {
-    if ((*it).first == (void*)pRes && (*it).second.first == subres &&
-        (*it).second.second == plane) {
+  for (const auto& it : resources_) {
+    if (it.first == (void*)pRes && it.second.first == subres &&
+        it.second.second == plane) {
       return CL_INVALID_D3D11_RESOURCE_KHR;
     }
   }
@@ -806,7 +806,7 @@ int D3D11Object::initD3D11Object(const Context& amdContext, ID3D11Resource* pRes
         STORE_SHARED_FLAGS(ID3D11Texture2D);
       }
 
-      if (desc.Format == DXGI_FORMAT_NV12) {
+      if ((desc.Format == DXGI_FORMAT_NV12) || (desc.Format == DXGI_FORMAT_P010)) {
         if (plane == -1) {
           obj.objDesc_.objSize_.Height += obj.objDesc_.objSize_.Height / 2;
         }
@@ -814,6 +814,10 @@ int D3D11Object::initD3D11Object(const Context& amdContext, ID3D11Resource* pRes
           obj.objDesc_.objSize_.Width /= 2;
           obj.objDesc_.objSize_.Height /= 2;
         }
+      }
+      // RGBA8 covers 2 pixels, thus divide width by 2
+      if (desc.Format == DXGI_FORMAT_YUY2) {
+        obj.objDesc_.objSize_.Width /= 2;
       }
     } break;
 
@@ -882,7 +886,7 @@ int D3D11Object::initD3D11Object(const Context& amdContext, ID3D11Resource* pRes
       return CL_INVALID_IMAGE_FORMAT_DESCRIPTOR;
     }
   }
-  resources_.push_back(std::make_pair(pRes, std::make_pair(subres, plane)));
+  resources_.push_back({pRes, {subres, plane}});
   return CL_SUCCESS;
 }
 
@@ -958,114 +962,6 @@ void BufferD3D11::initDeviceMemory() {
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
 }
 
-bool BufferD3D11::mapExtObjectInCQThread() {
-  D3D11_MAPPED_SUBRESOURCE mappedResource;
-  HRESULT hr;
-  D3D11_MAP gpuMap;
-  UINT cpuAccess;
-
-
-  if (getMemFlags() & CL_MEM_READ_WRITE) {
-    gpuMap = D3D11_MAP_READ_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_READ_ONLY) {
-    gpuMap = D3D11_MAP_READ;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_WRITE_ONLY) {
-    gpuMap = D3D11_MAP_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else {
-    // Should not get here, the flags had been checked before
-    LogError("\nInvalid memrory flags");
-    return false;
-  }
-
-  ID3D11Device* pD3D11Dev;
-  getD3D11Resource()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getUsage() == D3D11_USAGE_STAGING) {
-    // XXX Christophe: Use DeviceContext to map
-    //// Can map directly
-    hr = pImmediateContext->Map(getD3D11Resource(), 0, gpuMap, 0, &mappedResource);
-    if (hr != S_OK || !mappedResource.pData) {
-      LogError("Cannot map ID3D11Buffer object to CPU memory");
-      return false;
-    }
-  } else {
-    // The buffer need to be mapped indirectly
-    // Create auxiliary buffer
-    D3D11_BUFFER_DESC bufDesc = {getResourceByteSize(), D3D11_USAGE_STAGING, 0, cpuAccess, 0};
-    ID3D11Buffer* pAuxBuf;
-    hr = pD3D11Dev->CreateBuffer(&bufDesc, NULL, &pAuxBuf);
-    if (hr != S_OK || !pAuxBuf) {
-      LogError("\nCannot create auxiliary buffer");
-      return false;
-    }
-    setD3D11AuxRes(pAuxBuf);
-    // Copy contents of original buffer to auxiliary
-    pImmediateContext->CopyResource(pAuxBuf, getD3D11Resource());
-    // Now map the aux buffer
-    hr = pImmediateContext->Map(pAuxBuf, 0, gpuMap, 0, &mappedResource);
-    if (hr != S_OK || !mappedResource.pData) {
-      LogError("Cannot map D3D11 auxiliary buffer to CPU memory");
-      return false;
-    }
-  }
-
-  setHostMem(mappedResource.pData);
-  return true;
-}
-
-bool BufferD3D11::unmapExtObjectInCQThread() {
-  ID3D11Device* pD3D11Dev;
-  getD3D11AuxRes()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getMemFlags() & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)) {
-    if (getD3D11AuxRes()) {
-      // Need to copy data from aux to original
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      pImmediateContext->CopyResource(getD3D11Resource(), getD3D11AuxRes());
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), 0);
-    }
-  } else {
-    // Just unmap everything, no need to copy contents
-    if (getD3D11AuxRes()) {
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), 0);
-    }
-  }
-  setHostMem(NULL);
-  return true;
-}
-
 //
 // Class Image1DD3D11 implementation
 //
@@ -1073,16 +969,6 @@ void Image1DD3D11::initDeviceMemory() {
   deviceMemories_ =
       reinterpret_cast<DeviceMemory*>(reinterpret_cast<char*>(this) + sizeof(Image1DD3D11));
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
-}
-
-bool Image1DD3D11::mapExtObjectInCQThread() {
-  LogError("\nImage1DD3D11::mapExtObjectInCQThread() is not implemented yet\n");
-  return false;
-}
-
-bool Image1DD3D11::unmapExtObjectInCQThread() {
-  LogError("\nImage1DD3D11::unmapExtObjectInCQThread() is not implemented yet\n");
-  return false;
 }
 
 //
@@ -1095,119 +981,6 @@ void Image2DD3D11::initDeviceMemory() {
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
 }
 
-bool Image2DD3D11::mapExtObjectInCQThread() {
-  D3D11_MAPPED_SUBRESOURCE texture2D;
-  HRESULT hr;
-  D3D11_MAP gpuMap;
-  UINT cpuAccess;
-
-
-  if (getMemFlags() & CL_MEM_READ_WRITE) {
-    gpuMap = D3D11_MAP_READ_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_READ_ONLY) {
-    gpuMap = D3D11_MAP_READ;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_WRITE_ONLY) {
-    gpuMap = D3D11_MAP_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else {
-    // Should not get here, the flags had been checked before
-    LogError("\nInvalid memrory flags");
-    return false;
-  }
-
-  ID3D11Device* pD3D11Dev;
-  getD3D11Resource()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getUsage() == D3D11_USAGE_STAGING) {
-    // Can map directly
-    hr = pImmediateContext->Map(getD3D11Resource(), getSubresource(), gpuMap, 0, &texture2D);
-    if (hr != S_OK || !texture2D.pData) {
-      LogError("Cannot map ID3D11Texture2D object to CPU memory");
-      return false;
-    }
-  } else {
-    // The texture needs to be mapped indirectly.
-    // Create auxiliary texture.
-    D3D11_TEXTURE2D_DESC texDesc;
-    reinterpret_cast<ID3D11Texture2D*>(getD3D11Resource())->GetDesc(&texDesc);
-    texDesc.Usage = D3D11_USAGE_STAGING;
-    texDesc.MipLevels = 1;
-    texDesc.BindFlags = 0;
-    texDesc.CPUAccessFlags = cpuAccess;
-    texDesc.MiscFlags = 0;
-    ID3D11Texture2D* pAuxTex;
-    hr = pD3D11Dev->CreateTexture2D(&texDesc, NULL, &pAuxTex);
-    if (hr != S_OK) {
-      LogError("\nCannot create auxiliary 2D texture");
-      return false;
-    }
-    setD3D11AuxRes(pAuxTex);
-    // Copy contents of original texture to auxiliary
-    pImmediateContext->CopyResource(pAuxTex, getD3D11Resource());
-    // Now map the aux texture
-    hr = pImmediateContext->Map(pAuxTex, 0, gpuMap, 0, &texture2D);
-    if (hr != S_OK || !texture2D.pData) {
-      LogError("Cannot map D3D11 auxiliary 2D texture to CPU memory");
-      return false;
-    }
-  }
-
-  setHostMem(texture2D.pData);
-  return true;
-}
-
-bool Image2DD3D11::unmapExtObjectInCQThread() {
-  ID3D11Device* pD3D11Dev;
-  getD3D11AuxRes()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getMemFlags() & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)) {
-    if (getD3D11AuxRes()) {
-      // Need to copy data from aux to original
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      pImmediateContext->CopyResource(getD3D11Resource(), getD3D11AuxRes());
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), getSubresource());
-    }
-  } else {
-    // Just unmap everything, no need to copy contents
-    if (getD3D11AuxRes()) {
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), getSubresource());
-    }
-  }
-  setHostMem(NULL);
-  return true;
-}
-
 //
 // Class Image3DD3D11 implementation
 //
@@ -1215,119 +988,6 @@ void Image3DD3D11::initDeviceMemory() {
   deviceMemories_ =
       reinterpret_cast<DeviceMemory*>(reinterpret_cast<char*>(this) + sizeof(Image3DD3D11));
   memset(deviceMemories_, 0, context_().devices().size() * sizeof(DeviceMemory));
-}
-
-bool Image3DD3D11::mapExtObjectInCQThread() {
-  D3D11_MAPPED_SUBRESOURCE texture3D;
-  HRESULT hr;
-  D3D11_MAP gpuMap;
-  UINT cpuAccess;
-
-
-  if (getMemFlags() & CL_MEM_READ_WRITE) {
-    gpuMap = D3D11_MAP_READ_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_READ_ONLY) {
-    gpuMap = D3D11_MAP_READ;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else if (getMemFlags() & CL_MEM_WRITE_ONLY) {
-    gpuMap = D3D11_MAP_WRITE;
-    cpuAccess = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-  } else {
-    // Should not get here, the flags had been checked before
-    LogError("\nInvalid memrory flags");
-    return false;
-  }
-
-  ID3D11Device* pD3D11Dev;
-  getD3D11AuxRes()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getUsage() == D3D11_USAGE_STAGING) {
-    // Can map directly
-    hr = pImmediateContext->Map(getD3D11Resource(), getSubresource(), gpuMap, 0, &texture3D);
-    if (hr != S_OK || !texture3D.pData) {
-      LogError("Cannot map ID3D11Texture3D object to CPU memory");
-      return false;
-    }
-  } else {
-    // The texture needs to be mapped indirectly.
-    // Create auxiliary texture.
-    D3D11_TEXTURE3D_DESC texDesc;
-    reinterpret_cast<ID3D11Texture3D*>(getD3D11Resource())->GetDesc(&texDesc);
-    texDesc.Usage = D3D11_USAGE_STAGING;
-    texDesc.MipLevels = 1;
-    texDesc.BindFlags = 0;
-    texDesc.CPUAccessFlags = cpuAccess;
-    texDesc.MiscFlags = 0;
-    ID3D11Texture3D* pAuxTex;
-    hr = pD3D11Dev->CreateTexture3D(&texDesc, NULL, &pAuxTex);
-    if (hr != S_OK) {
-      LogError("\nCannot create auxiliary 3D texture");
-      return false;
-    }
-    setD3D11AuxRes(pAuxTex);
-    // Copy contents of original texture to auxiliary
-    pImmediateContext->CopyResource(pAuxTex, getD3D11Resource());
-    // Now map the aux texture
-    hr = pImmediateContext->Map(pAuxTex, 0, gpuMap, 0, &texture3D);
-    if (hr != S_OK || !texture3D.pData) {
-      LogError("Cannot map D3D11 auxiliary 3D texture to CPU memory");
-      return false;
-    }
-  }
-
-  setHostMem(texture3D.pData);
-  return true;
-}
-
-bool Image3DD3D11::unmapExtObjectInCQThread() {
-  ID3D11Device* pD3D11Dev;
-  getD3D11AuxRes()->GetDevice(&pD3D11Dev);
-  if (!pD3D11Dev) {
-    LogError("\nCannot get D3D11 device");
-    return false;
-  }
-  pD3D11Dev->Release();
-  ID3D11DeviceContext* pImmediateContext = NULL;
-  pD3D11Dev->GetImmediateContext(&pImmediateContext);
-  if (!pImmediateContext) {
-    LogError("\nCannot get D3D11 device context");
-    return false;
-  }
-  pImmediateContext->Release();
-  if (getMemFlags() & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)) {
-    if (getD3D11AuxRes()) {
-      // Need to copy data from aux to original
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      pImmediateContext->CopyResource(getD3D11Resource(), getD3D11AuxRes());
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), getSubresource());
-    }
-  } else {
-    // Just unmap everything, no need to copy contents
-    if (getD3D11AuxRes()) {
-      pImmediateContext->Unmap(getD3D11AuxRes(), 0);
-      getD3D11AuxRes()->Release();
-      setD3D11AuxRes(NULL);
-    } else {
-      pImmediateContext->Unmap(getD3D11Resource(), getSubresource());
-    }
-  }
-  setHostMem(NULL);
-  return true;
 }
 
 //
@@ -1450,6 +1110,8 @@ size_t D3D11Object::getElementBytes(DXGI_FORMAT dxgiFmt, cl_uint plane) {
 
     case DXGI_FORMAT_B8G8R8A8_UNORM:
     case DXGI_FORMAT_B8G8R8X8_UNORM:
+
+    case DXGI_FORMAT_YUY2:
       bytesPerPixel = 4;
       break;
 
@@ -1506,6 +1168,12 @@ size_t D3D11Object::getElementBytes(DXGI_FORMAT dxgiFmt, cl_uint plane) {
         bytesPerPixel = 2;
       }
       break;
+    case DXGI_FORMAT_P010:
+        bytesPerPixel = 2;
+        if (plane == 1) {
+            bytesPerPixel = 4;
+        }
+        break;
     default:
       bytesPerPixel = 0;
       _ASSERT(FALSE);
@@ -1651,6 +1319,7 @@ cl_image_format D3D11Object::getCLFormatFromDXGI(DXGI_FORMAT dxgiFmt, cl_uint pl
       break;
 
     case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_YUY2:
       fmt.image_channel_order = CL_RGBA;
       fmt.image_channel_data_type = CL_UNSIGNED_INT8;
       break;
@@ -1866,11 +1535,17 @@ cl_image_format D3D11Object::getCLFormatFromDXGI(DXGI_FORMAT dxgiFmt, cl_uint pl
     case DXGI_FORMAT_NV12:
       fmt.image_channel_order = CL_R;
       fmt.image_channel_data_type = CL_UNSIGNED_INT8;
-
       if (plane == 1) {
         fmt.image_channel_order = CL_RG;
       }
       break;
+    case DXGI_FORMAT_P010:
+        fmt.image_channel_order = CL_R;
+        fmt.image_channel_data_type = CL_UNSIGNED_INT16;
+        if (plane == 1) {
+            fmt.image_channel_order = CL_RG;
+        }
+        break;
     default:
       _ASSERT(FALSE);
       break;

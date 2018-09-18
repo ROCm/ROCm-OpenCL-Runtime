@@ -11,10 +11,6 @@
 extern amd::AppProfile* rocCreateAppProfile();
 #endif
 
-#if defined(WITH_CPU_DEVICE)
-#include "device/cpu/cpudevice.hpp"
-#endif  // WITH_CPU_DEVICE
-
 #if defined(WITH_PAL_DEVICE)
 // namespace pal {
 extern bool PalDeviceLoad();
@@ -62,29 +58,29 @@ namespace amd {
 std::vector<Device*>* Device::devices_ = NULL;
 AppProfile Device::appProfile_;
 
-amd::Monitor SvmManager::AllocatedLock_("Guards SVM allocation list");
-std::map<uintptr_t, amd::Memory*> SvmManager::svmBufferMap_;
+amd::Monitor MemObjMap::AllocatedLock_("Guards SVM allocation list");
+std::map<uintptr_t, amd::Memory*> MemObjMap::MemObjMap_;
 
-size_t SvmManager::size() {
+size_t MemObjMap::size() {
   amd::ScopedLock lock(AllocatedLock_);
-  return svmBufferMap_.size();
+  return MemObjMap_.size();
 }
 
-void SvmManager::AddSvmBuffer(const void* k, amd::Memory* v) {
+void MemObjMap::AddMemObj(const void* k, amd::Memory* v) {
   amd::ScopedLock lock(AllocatedLock_);
-  svmBufferMap_.insert(std::pair<uintptr_t, amd::Memory*>(reinterpret_cast<uintptr_t>(k), v));
+  MemObjMap_.insert({reinterpret_cast<uintptr_t>(k), v});
 }
 
-void SvmManager::RemoveSvmBuffer(const void* k) {
+void MemObjMap::RemoveMemObj(const void* k) {
   amd::ScopedLock lock(AllocatedLock_);
-  svmBufferMap_.erase(reinterpret_cast<uintptr_t>(k));
+  MemObjMap_.erase(reinterpret_cast<uintptr_t>(k));
 }
 
-amd::Memory* SvmManager::FindSvmBuffer(const void* k) {
+amd::Memory* MemObjMap::FindMemObj(const void* k) {
   amd::ScopedLock lock(AllocatedLock_);
   uintptr_t key = reinterpret_cast<uintptr_t>(k);
-  std::map<uintptr_t, amd::Memory*>::iterator it = svmBufferMap_.upper_bound(key);
-  if (it == svmBufferMap_.begin()) {
+  auto it = MemObjMap_.upper_bound(key);
+  if (it == MemObjMap_.begin()) {
     return NULL;
   }
 
@@ -176,9 +172,6 @@ bool Device::init() {
     ret |= PalDeviceLoad();
   }
 #endif  // WITH_PAL_DEVICE
-#if defined(WITH_CPU_DEVICE)
-  ret |= cpu::Device::init();
-#endif  // WITH_CPU_DEVICE
   return ret;
 }
 
@@ -203,23 +196,16 @@ void Device::tearDown() {
     PalDeviceUnload();
   }
 #endif  // WITH_PAL_DEVICE
-#if defined(WITH_CPU_DEVICE)
-  cpu::Device::tearDown();
-#endif  // WITH_CPU_DEVICE
 }
 
-Device::Device(Device* parent)
+Device::Device()
     : settings_(NULL),
       online_(true),
       blitProgram_(NULL),
       hwDebugMgr_(NULL),
-      parent_(parent),
       vaCacheAccess_(nullptr),
       vaCacheMap_(nullptr) {
   memset(&info_, '\0', sizeof(info_));
-  if (parent_ != NULL) {
-    parent_->retain();
-  }
 }
 
 Device::~Device() {
@@ -233,17 +219,8 @@ Device::~Device() {
     delete settings_;
   }
 
-  if (parent_ != NULL) {
-    parent_->release();
-  } else {
-    if (info_.extensions_ != NULL) {
-      delete[] info_.extensions_;
-    }
-  }
-
-  if (info_.partitionCreateInfo_.type_.byCounts_ &&
-      info_.partitionCreateInfo_.byCounts_.countsList_ != NULL) {
-    delete[] info_.partitionCreateInfo_.byCounts_.countsList_;
+  if (info_.extensions_ != NULL) {
+    delete[] info_.extensions_;
   }
 }
 
@@ -257,15 +234,6 @@ bool Device::create() {
     return false;
   }
   return true;
-}
-
-bool Device::isAncestor(const Device* sub) const {
-  for (const Device* d = sub->parent_; d != NULL; d = d->parent_) {
-    if (d == this) {
-      return true;
-    }
-  }
-  return false;
 }
 
 void Device::registerDevice() {
@@ -320,8 +288,7 @@ device::Memory* Device::findMemoryFromVA(const void* ptr, size_t* offset) const 
   amd::ScopedLock lk(*vaCacheAccess_);
 
   uintptr_t key = reinterpret_cast<uintptr_t>(ptr);
-  std::map<uintptr_t, device::Memory*>::iterator it =
-      vaCacheMap_->upper_bound(reinterpret_cast<uintptr_t>(ptr));
+  auto it = vaCacheMap_->upper_bound(reinterpret_cast<uintptr_t>(ptr));
   if (it == vaCacheMap_->begin()) {
     return nullptr;
   }
@@ -352,10 +319,10 @@ std::vector<Device*> Device::getDevices(cl_device_type type, bool offlineDevices
   }
 
   // Create the list of available devices
-  for (device_iterator it = devices_->begin(); it != devices_->end(); ++it) {
+  for (const auto& it : *devices_) {
     // Check if the device type is matched
-    if ((*it)->IsTypeMatching(type, offlineDevices)) {
-      result.push_back(*it);
+    if (it->IsTypeMatching(type, offlineDevices)) {
+      result.push_back(it);
     }
   }
 
@@ -369,9 +336,9 @@ size_t Device::numDevices(cl_device_type type, bool offlineDevices) {
     return 0;
   }
 
-  for (device_iterator it = devices_->begin(); it != devices_->end(); ++it) {
+  for (const auto& it : *devices_) {
     // Check if the device type is matched
-    if ((*it)->IsTypeMatching(type, offlineDevices)) {
+    if (it->IsTypeMatching(type, offlineDevices)) {
       ++result;
     }
   }
@@ -393,7 +360,7 @@ bool Device::getDeviceIDs(cl_device_type deviceType, cl_uint numEntries, cl_devi
     return false;
   }
 
-  std::vector<amd::Device*>::iterator it = ret.begin();
+  auto it = ret.cbegin();
   cl_uint count = std::min(numEntries, (cl_uint)ret.size());
 
   while (count--) {
@@ -633,7 +600,9 @@ Settings::Settings() {
                          //!< concurrent Virtual GPUs for default
 }
 
-bool Kernel::createSignature(const parameters_t& params) {
+bool Kernel::createSignature(
+  const parameters_t& params, uint32_t numParameters,
+  uint32_t version) {
   std::stringstream attribs;
   if (workGroupInfo_.compileSize_[0] != 0) {
     attribs << "reqd_work_group_size(";
@@ -665,7 +634,7 @@ bool Kernel::createSignature(const parameters_t& params) {
   // Destroy old signature if it was allocated before
   // (offline devices path)
   delete signature_;
-  signature_ = new amd::KernelSignature(params, attribs.str());
+  signature_ = new amd::KernelSignature(params, attribs.str(), numParameters, version);
   if (NULL != signature_) {
     return true;
   }
@@ -707,7 +676,7 @@ void Memory::saveMapInfo(const void* mapAddress, const amd::Coord3D origin,
 
   // Insert into the map if it's the first region
   if (++pInfo->count_ == 1) {
-    writeMapInfo_.insert(std::pair<const void*, WriteMapInfo>(mapAddress, info));
+    writeMapInfo_.insert({mapAddress, info});
   }
 }
 
@@ -729,9 +698,8 @@ Program::~Program() { clear(); }
 
 void Program::clear() {
   // Destroy all device kernels
-  kernels_t::const_iterator it;
-  for (it = kernels_.begin(); it != kernels_.end(); ++it) {
-    delete it->second;
+  for (const auto& it : kernels_) {
+    delete it.second;
   }
   kernels_.clear();
 }
@@ -1035,8 +1003,8 @@ cl_int Program::build(const std::string& sourceCode, const char* origOptions,
 bool Program::getCompileOptionsAtLinking(const std::vector<Program*>& inputPrograms,
                                          const amd::option::Options* linkOptions) {
   amd::option::Options compileOptions;
-  std::vector<device::Program*>::const_iterator it = inputPrograms.begin();
-  std::vector<device::Program*>::const_iterator itEnd = inputPrograms.end();
+  auto it = inputPrograms.cbegin();
+  const auto itEnd = inputPrograms.cend();
   for (size_t i = 0; it != itEnd; ++it, ++i) {
     Program* program = *it;
 
@@ -1473,7 +1441,7 @@ bool ClBinary::createElfBinary(bool doencrypt, Program::type_t type) {
   return true;
 }
 
-Program::binary_t ClBinary::data() const { return std::make_pair(binary_, size_); }
+Program::binary_t ClBinary::data() const { return {binary_, size_}; }
 
 bool ClBinary::setBinary(const char* theBinary, size_t theBinarySize, bool allocated) {
   release();
@@ -1646,84 +1614,5 @@ bool ClBinary::isSPIRV() const {
   }
   return false;
 }
-
-cl_device_partition_property PartitionType::toCL() const {
-  static cl_device_partition_property conv[] = {CL_DEVICE_PARTITION_EQUALLY,
-                                                CL_DEVICE_PARTITION_BY_COUNTS,
-                                                CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN};
-  return conv[amd::leastBitSet(value_)];
-}
-
-size_t PartitionType::toCL(cl_device_partition_property* types) const {
-  size_t i = 0;
-  if (equally_) {
-    types[i++] = CL_DEVICE_PARTITION_EQUALLY;
-  }
-  if (byCounts_) {
-    types[i++] = CL_DEVICE_PARTITION_BY_COUNTS;
-  }
-  if (byAffinityDomain_) {
-    types[i++] = CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN;
-  }
-  return i;
-}
-
-cl_device_affinity_domain AffinityDomain::toCL() const { return (cl_device_affinity_domain)value_; }
-
-#ifdef cl_ext_device_fission
-
-cl_device_partition_property_ext PartitionType::toCLExt() const {
-  static cl_device_partition_property_ext conv[] = {CL_DEVICE_PARTITION_EQUALLY_EXT,
-                                                    CL_DEVICE_PARTITION_BY_COUNTS_EXT,
-                                                    CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN_EXT};
-  return conv[amd::leastBitSet(value_)];
-}
-
-size_t PartitionType::toCLExt(cl_device_partition_property_ext* types) const {
-  size_t i = 0;
-  if (equally_) {
-    types[i++] = CL_DEVICE_PARTITION_EQUALLY_EXT;
-  }
-  if (byCounts_) {
-    types[i++] = CL_DEVICE_PARTITION_BY_COUNTS_EXT;
-  }
-  if (byAffinityDomain_) {
-    types[i++] = CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN_EXT;
-  }
-  return i;
-}
-
-cl_device_partition_property_ext AffinityDomain::toCLExt() const {
-  static cl_device_partition_property_ext conv[] = {
-      CL_AFFINITY_DOMAIN_NUMA_EXT,     CL_AFFINITY_DOMAIN_L4_CACHE_EXT,
-      CL_AFFINITY_DOMAIN_L3_CACHE_EXT, CL_AFFINITY_DOMAIN_L2_CACHE_EXT,
-      CL_AFFINITY_DOMAIN_L1_CACHE_EXT, CL_AFFINITY_DOMAIN_NEXT_FISSIONABLE_EXT};
-  return conv[amd::leastBitSet(value_)];
-}
-
-size_t AffinityDomain::toCLExt(cl_device_partition_property_ext* affinities) const {
-  size_t i = 0;
-  if (numa_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_NUMA_EXT;
-  }
-  if (cacheL4_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_L4_CACHE_EXT;
-  }
-  if (cacheL3_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_L3_CACHE_EXT;
-  }
-  if (cacheL2_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_L2_CACHE_EXT;
-  }
-  if (cacheL1_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_L1_CACHE_EXT;
-  }
-  if (next_) {
-    affinities[i++] = CL_AFFINITY_DOMAIN_NEXT_FISSIONABLE_EXT;
-  }
-  return i;
-}
-
-#endif  // cl_ext_device_fission
 
 }  // namespace device

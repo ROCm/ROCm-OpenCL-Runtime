@@ -75,7 +75,7 @@ class Options;
 }  // option
 
 struct ProfilingCallback : public amd::HeapObject {
-  virtual void callback(ulong duration) = 0;
+  virtual void callback(ulong duration, uint32_t waves) = 0;
 };
 }
 
@@ -120,6 +120,9 @@ enum OclExtensions {
   ClAMDLiquidFlash,
   ClAmdCopyBufferP2P,
   ClAmdAssemblyProgram,
+#if defined(_WIN32)
+  ClAmdPlanarYuv,
+#endif
   ClExtTotal
 };
 
@@ -163,6 +166,9 @@ static const char* OclExtensionsString[] = {"cl_khr_fp64 ",
                                             "cl_amd_liquid_flash ",
                                             "cl_amd_copy_buffer_p2p ",
                                             "cl_amd_assembly_program ",
+#if defined(_WIN32)
+                                            "cl_amd_planar_yuv",
+#endif
                                             NULL};
 
 static constexpr int AmdVendor = 0x1002;
@@ -170,97 +176,6 @@ static constexpr int AmdVendor = 0x1002;
 namespace device {
 class ClBinary;
 class BlitManager;
-
-struct PartitionType : public amd::EmbeddedObject {
-  enum { EQUALLY = (1 << 0), BY_COUNTS = (1 << 1), BY_AFFINITY_DOMAIN = (1 << 2) };
-
-  union {
-    struct {
-      uint equally_ : 1;
-      uint byCounts_ : 1;
-      uint byAffinityDomain_ : 1;
-    };
-    uint value_;
-  };
-
-  size_t getNumSet() const { return (size_t)amd::countBitsSet(value_); }
-
-  cl_device_partition_property toCL() const;
-  size_t toCL(cl_device_partition_property* types) const;
-#ifdef cl_ext_device_fission
-  cl_device_partition_property_ext toCLExt() const;
-  size_t toCLExt(cl_device_partition_property_ext* types) const;
-#endif
-};
-
-struct AffinityDomain : public amd::EmbeddedObject {
-  enum {
-    AFFINITY_DOMAIN_NUMA = (1 << 0),
-    AFFINITY_DOMAIN_L4_CACHE = (1 << 1),
-    AFFINITY_DOMAIN_L3_CACHE = (1 << 2),
-    AFFINITY_DOMAIN_L2_CACHE = (1 << 3),
-    AFFINITY_DOMAIN_L1_CACHE = (1 << 4),
-    AFFINITY_DOMAIN_NEXT_PARTITIONABLE = (1 << 5)
-  };
-
-  union {
-    struct {
-      uint numa_ : 1;
-      uint cacheL4_ : 1;
-      uint cacheL3_ : 1;
-      uint cacheL2_ : 1;
-      uint cacheL1_ : 1;
-      uint next_ : 1;
-    };
-    uint value_;
-  };
-
-  size_t getNumSet() const { return (size_t)amd::countBitsSet(value_); }
-
-  cl_device_affinity_domain toCL() const;
-#ifdef cl_ext_device_fission
-  cl_device_partition_property_ext toCLExt() const;
-  size_t toCLExt(cl_device_partition_property_ext* affinities) const;
-#endif
-};
-
-//! Device partition properties.
-struct PartitionInfo : public amd::EmbeddedObject {
-  PartitionType type_;
-  union {
-    struct {
-      size_t numComputeUnits_;
-    } equally_;
-
-    AffinityDomain byAffinityDomain_;
-
-    struct {
-      const cl_uint* countsList_;
-      size_t listSize_;
-    } byCounts_;
-  };
-};
-
-//! Create Sub-Devices request properties.
-struct CreateSubDevicesInfo : public amd::HeapObject {
-  PartitionInfo p_;
-  virtual cl_uint countsListAt(size_t i) const = 0;
-  virtual ~CreateSubDevicesInfo() {}
-};
-
-template <typename PROP_T> struct CreateSubDevicesInfoT : public CreateSubDevicesInfo {
-  virtual cl_uint countsListAt(size_t i) const {
-    return (cl_uint) reinterpret_cast<const PROP_T*>(p_.byCounts_.countsList_)[i];
-  }
-
-  void initCountsList(const PROP_T* props) {
-    p_.byCounts_.countsList_ = reinterpret_cast<const cl_uint*>(props);
-    p_.byCounts_.listSize_ = 0;
-    for (; *props != ((PROP_T)0); ++props) {
-      ++p_.byCounts_.listSize_;
-    }
-  }
-};
 
 //! Physical device properties.
 struct Info : public amd::EmbeddedObject {
@@ -312,8 +227,20 @@ struct Info : public amd::EmbeddedObject {
   cl_uint nativeVectorWidthDouble_;
   cl_uint nativeVectorWidthHalf_;
 
-  //! Maximum configured clock frequency of the device in MHz.
-  cl_uint maxClockFrequency_;
+  //! Maximum configured engine clock frequency of the device in MHz.
+  cl_uint maxEngineClockFrequency_;
+
+  //! Maximum configured memory clock frequency of the device in MHz.
+  cl_uint maxMemoryClockFrequency_;
+
+  //! Memory bus width in bits.
+  cl_uint vramBusBitWidth_;
+
+  //! Size of L2 Cache in bytes.
+  cl_uint l2CacheSize_;
+
+  //! Timestamp frequency in Hz.
+  cl_uint timeStampFrequency_;
 
   //! Describes the address spaces supported  by the device.
   cl_uint addressBits_;
@@ -475,17 +402,6 @@ struct Info : public amd::EmbeddedObject {
   //! Returns max number of images in a 1D or 2D image array
   size_t imageMaxArraySize_;
 
-  //! Returns the list of partition types supported by device
-  PartitionType partitionProperties_;
-
-  //! Returns the list of supported affinity domains for
-  //! partitioning the device using CL_DEVICE_PARTITION_BY_AFFINITY_DOMAIN
-  AffinityDomain affinityDomain_;
-
-  //! Returns the properties argument specified in clCreateSubDevices
-  //! if device is a subdevice.
-  PartitionInfo partitionCreateInfo_;
-
   //! Returns CL_TRUE if the devices preference is for the user to be
   //! responsible for synchronization
   cl_bool preferredInteropUserSync_;
@@ -518,6 +434,8 @@ struct Info : public amd::EmbeddedObject {
   cl_uint simdInstructionWidth_;
   //! The number of workitems per wavefront
   cl_uint wavefrontWidth_;
+  //! Available number of SGPRs
+  cl_uint availableSGPRs_;
   //! Number of global memory channels
   cl_uint globalMemChannels_;
   //! Number of banks in each global memory channel
@@ -795,6 +713,8 @@ class Memory : public amd::HeapObject {
   //! Returns the state of CPU uncached access
   bool isCpuUncached() const { return (flags_ & MemoryCpuUncached) ? true : false; }
 
+  virtual uint64_t virtualAddress() const { return 0; }
+
  protected:
   enum Flags {
     HostMemoryDirectAccess = 0x00000001,  //!< GPU has direct access to the host memory
@@ -814,9 +734,9 @@ class Memory : public amd::HeapObject {
   //! NB, the map data below is for an API-level map (from clEnqueueMapBuffer),
   //! not a physical map. When a memory object does not use USE_HOST_PTR we
   //! can use a remote resource and DMA, avoiding the additional CPU memcpy.
-  amd::Memory* mapMemory_;                            //!< Memory used as map target buffer
-  volatile size_t indirectMapCount_;                  //!< Number of maps
-  std::map<const void*, WriteMapInfo> writeMapInfo_;  //!< Saved write map info for partial unmap
+  amd::Memory* mapMemory_;                                      //!< Memory used as map target buffer
+  volatile size_t indirectMapCount_;                            //!< Number of maps
+  std::unordered_map<const void*, WriteMapInfo> writeMapInfo_;  //!< Saved write map info for partial unmap
 
   //! Increment map count
   void incIndMapCount() { ++indirectMapCount_; }
@@ -824,21 +744,20 @@ class Memory : public amd::HeapObject {
   //! Decrement map count
   virtual void decIndMapCount() {}
 
+  size_t size_;   //!< Memory size
+
  private:
   //! Disable default copy constructor
-  Memory& operator=(const Memory&);
+  Memory& operator=(const Memory&) = delete;
 
   //! Disable operator=
-  Memory(const Memory&);
-
-  //! Our size
-  size_t size_;
+  Memory(const Memory&) = delete;
 };
 
 class Sampler : public amd::HeapObject {
  public:
   //! Constructor
-  Sampler() {}
+  Sampler() : hwSrd_(0) {}
 
   //! Default destructor for the device memory object
   virtual ~Sampler(){};
@@ -923,13 +842,6 @@ class Kernel : public amd::HeapObject {
   //! Default destructor
   virtual ~Kernel();
 
-  //! Validates memory argument
-  virtual bool validateMemory(uint idx,            //!< Argument's index
-                              amd::Memory* amdMem  //!< memory object for validation
-                              ) const {
-    return true;
-  }
-
   //! Returns the kernel info structure
   const WorkGroupInfo* workGroupInfo() const { return &workGroupInfo_; }
 
@@ -940,7 +852,9 @@ class Kernel : public amd::HeapObject {
   const std::string& name() const { return name_; }
 
   //! Initializes the kernel parameters for the abstraction layer
-  bool createSignature(const parameters_t& params);
+  bool createSignature(
+    const parameters_t& params, uint32_t numParameters,
+    uint32_t version);
 
   //! Returns TRUE if it's a HSA kernel
   bool hsa() const { return hsa_; }
@@ -968,6 +882,10 @@ class Kernel : public amd::HeapObject {
   //! Get profiling callback object
   virtual amd::ProfilingCallback* getProfilingCallback(const device::VirtualDevice* vdv) {
     return NULL;
+  }
+
+  virtual uint getWavesPerSH(const device::VirtualDevice* vdv) const {
+      return 0;
   }
 
   void setVecTypeHint(const std::string& hint) { workGroupInfo_.compileVecTypeHint_ = hint; }
@@ -999,7 +917,7 @@ class Kernel : public amd::HeapObject {
 class Program : public amd::HeapObject {
  public:
   typedef std::pair<const void*, size_t> binary_t;
-  typedef std::map<std::string, Kernel*> kernels_t;
+  typedef std::unordered_map<std::string, Kernel*> kernels_t;
   // type of the program
   typedef enum {
     TYPE_NONE = 0,     // uncompiled
@@ -1329,14 +1247,14 @@ class ClBinary : public amd::HeapObject {
 
 inline const Program::binary_t Program::binary() const {
   if (clBinary() == NULL) {
-    return std::make_pair((const void*)0, 0);
+    return {(const void*)0, 0};
   }
   return clBinary()->data();
 }
 
 inline Program::binary_t Program::binary() {
   if (clBinary() == NULL) {
-    return std::make_pair((const void*)0, 0);
+    return {(const void*)0, 0};
   }
   return clBinary()->data();
 }
@@ -1452,17 +1370,17 @@ class VirtualDevice : public amd::HeapObject {
 namespace amd {
 
 
-//! SvmManager class
-class SvmManager : public AllStatic {
+//! MemoryObject map lookup  class
+class MemObjMap : public AllStatic {
  public:
   static size_t size();  //!< obtain the size of the container
-  static void AddSvmBuffer(const void* k,
-                           amd::Memory* v);    //!< add the svm pointer and buffer in the container
-  static void RemoveSvmBuffer(const void* k);  //!< Remove an entry of svm info from the container
-  static amd::Memory* FindSvmBuffer(
-      const void* k);  //!< find the svm buffer based on the input pointer
+  static void AddMemObj(const void* k,
+                           amd::Memory* v);    //!< add the host mem pointer and buffer in the container
+  static void RemoveMemObj(const void* k);  //!< Remove an entry of mem object from the container
+  static amd::Memory* FindMemObj(
+      const void* k);  //!< find the mem object based on the input pointer
  private:
-  static std::map<uintptr_t, amd::Memory*> svmBufferMap_;  //!< the svm space information container
+  static std::map<uintptr_t, amd::Memory*> MemObjMap_;  //!< the mem object<->hostptr information container
   static amd::Monitor AllocatedLock_;                      //!< amd monitor locker
 };
 
@@ -1495,22 +1413,22 @@ class Device : public RuntimeObject {
 
   virtual Compiler* compiler() const = 0;
 
-  Device(Device* parent = NULL);
+  Device();
   virtual ~Device();
 
   //! Initializes abstraction layer device object
   bool create();
 
-  //! Increment the reference count
   uint retain() {
-    // Only increment the reference count of sub-devices
-    return !isRootDevice() ? RuntimeObject::retain() : 0u;
+    // Overwrite the RuntimeObject::retain().
+    // There is an issue in the old SHOC11_DeviceMemory test on TC
+    return 0u;
   }
 
-  //! Decrement the reference count
   uint release() {
-    // Only decrement the reference count of sub-devices
-    return !isRootDevice() ? RuntimeObject::release() : 0u;
+    // Overwrite the RuntimeObject::release().
+    // There is an issue in the old SHOC11_DeviceMemory test on TC
+    return 0u;
   }
 
   //! Register a device as available
@@ -1557,10 +1475,6 @@ class Device : public RuntimeObject {
   //! Return this device's type.
   cl_device_type type() const { return info().type_ & ~(CL_DEVICE_TYPE_DEFAULT); }
 
-  //! Create sub-devices according to the given partition scheme.
-  virtual cl_int createSubDevices(device::CreateSubDevicesInfo& create_info, cl_uint num_entries,
-                                  cl_device_id* devices, cl_uint* num_devices) = 0;
-
   //! Create a new virtual device environment.
   virtual device::VirtualDevice* createVirtualDevice(CommandQueue* queue = NULL) = 0;
 
@@ -1578,9 +1492,6 @@ class Device : public RuntimeObject {
       amd::Memory& owner,           //!< Owner memory object
       const device::Memory& parent  //!< Parent device memory object for the view
       ) const = 0;
-
-  //! Reallocates device memory object
-  virtual bool reallocMemory(Memory& owner) const = 0;
 
   //! Return true if initialized external API interop, otherwise false
   virtual bool bindExternalDevice(
@@ -1652,30 +1563,6 @@ class Device : public RuntimeObject {
 
   //! Returns TRUE if the device is available for computations
   bool isOnline() const { return online_; }
-  //! Returns TRUE if the device is a root device (as opposed to sub-device)
-  bool isRootDevice() const { return parent_ == NULL; }
-  //! Returns TRUE if 'this' is an ancestor of the given sub-device.
-  bool isAncestor(const Device* sub) const;
-
-  //! Return the parent device.
-  Device* parent() const { return parent_; }
-
-  //! Return the root device for this instance;
-  Device& rootDevice() {
-    Device* root = this;
-    while (!root->isRootDevice()) {
-      root = root->parent_;
-    }
-    return *root;
-  }
-
-  const Device& rootDevice() const {
-    const Device* root = this;
-    while (!root->isRootDevice()) {
-      root = root->parent_;
-    }
-    return *root;
-  }
 
   //! Returns device settings
   const device::Settings& settings() const { return *settings_; }
@@ -1732,15 +1619,29 @@ class Device : public RuntimeObject {
   static AppProfile* rocAppProfile_;
 #endif
 
-  typedef std::vector<Device*>::iterator device_iterator;
   static std::vector<Device*>* devices_;  //!< All known devices
 
-  Device* parent_;                                    //!< This device's parent
   Monitor* vaCacheAccess_;                            //!< Lock to serialize VA caching access
   std::map<uintptr_t, device::Memory*>* vaCacheMap_;  //!< VA cache map
 };
 
 struct KernelParameterDescriptor {
+  enum {
+    Value = 0,
+    HiddenNone = 1,
+    HiddenGlobalOffsetX = 2,
+    HiddenGlobalOffsetY = 3,
+    HiddenGlobalOffsetZ = 4,
+    HiddenPrintfBuffer = 5,
+    HiddenDefaultQueue = 6,
+    HiddenCompletionAction = 7,
+    MemoryObject = 8,
+    ReferenceObject = 9,
+    ValueObject = 10,
+    ImageObject = 11,
+    SamplerObject = 12,
+    QueueObject = 13
+  };
   const char* name_;       //!< The parameter's name in the source
   clk_value_type_t type_;  //!< The parameter's type
   size_t offset_;          //!< Its offset in the parameter's stack
@@ -1751,7 +1652,19 @@ struct KernelParameterDescriptor {
   cl_kernel_arg_access_qualifier accessQualifier_;
   //! Argument's type qualifier
   cl_kernel_arg_type_qualifier typeQualifier_;
-  const char* typeName_;  //!< Argument's type name
+  const char* typeName_;   //!< Argument's type name
+  union InfoData {
+    struct {
+      uint32_t oclObject_  : 4;   //!< OCL object type
+      uint32_t readOnly_   : 1;   //!< OCL object is read only, applied to memory only
+      uint32_t rawPointer_ : 1;   //!< Arguments have a raw GPU VA
+      uint32_t defined_    : 1;   //!< The argument was defined by the app
+      uint32_t reserved_   : 1;   //!< reserved
+      uint32_t arrayIndex_ : 24;  //!< Index in the objects array or LDS alignment
+    };
+    uint32_t allValues_;
+    InfoData() : allValues_(0) {}
+  } info_;
 };
 
 #if defined(WITH_LIGHTNING_COMPILER)

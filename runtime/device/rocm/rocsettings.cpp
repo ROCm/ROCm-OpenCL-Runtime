@@ -74,6 +74,10 @@ Settings::Settings() {
   singleFpDenorm_ = false;
 
   apuSystem_ = false;
+
+  // Device enqueuing settings
+  numDeviceEvents_ = 1024;
+  numWaitEvents_ = 8;
 }
 
 bool Settings::create(bool fullProfile, int gfxipVersion) {
@@ -119,10 +123,9 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
 
 #if defined(WITH_LIGHTNING_COMPILER)
   enableExtension(ClAmdAssemblyProgram);
-  switch (gfxipVersion) {
-    case 900:
+  // enable subnormals for gfx900 and later
+  if (gfxipVersion >= 900) {
       singleFpDenorm_ = true;
-      break;
   }
 #endif  // WITH_LIGHTNING_COMPILER
 
@@ -140,6 +143,23 @@ void Settings::override() {
   // Limit reported workgroup size
   if (GPU_MAX_WORKGROUP_SIZE != 0) {
     preferredWorkGroupSize_ = GPU_MAX_WORKGROUP_SIZE;
+  }
+
+  if (GPU_MAX_WORKGROUP_SIZE_2D_X != 0) {
+    maxWorkGroupSize2DX_ = GPU_MAX_WORKGROUP_SIZE_2D_X;
+  }
+  if (GPU_MAX_WORKGROUP_SIZE_2D_Y != 0) {
+    maxWorkGroupSize2DY_ = GPU_MAX_WORKGROUP_SIZE_2D_Y;
+  }
+
+  if (GPU_MAX_WORKGROUP_SIZE_3D_X != 0) {
+    maxWorkGroupSize3DX_ = GPU_MAX_WORKGROUP_SIZE_3D_X;
+  }
+  if (GPU_MAX_WORKGROUP_SIZE_3D_Y != 0) {
+    maxWorkGroupSize3DY_ = GPU_MAX_WORKGROUP_SIZE_3D_Y;
+  }
+  if (GPU_MAX_WORKGROUP_SIZE_3D_Z != 0) {
+    maxWorkGroupSize3DZ_ = GPU_MAX_WORKGROUP_SIZE_3D_Z;
   }
 
   if (!flagIsDefault(GPU_MAX_COMMAND_QUEUES)) {

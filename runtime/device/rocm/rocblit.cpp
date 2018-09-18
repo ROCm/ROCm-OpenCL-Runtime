@@ -5,7 +5,8 @@
 #include "device/rocm/rocdevice.hpp"
 #include "device/rocm/rocblit.hpp"
 #include "device/rocm/rocmemory.hpp"
-#include "device/rocm/rocvirtual.hpp"
+#include "device/rocm/rockernel.hpp"
+#include "device/rocm/rocsched.hpp"
 #include "utils/debug.hpp"
 #include <algorithm>
 
@@ -720,7 +721,8 @@ bool KernelBlitManager::createProgram(Device& device) {
 
   // Create an internal constant buffer
   constantBuffer_ = new (*context_) amd::Buffer(*context_, CL_MEM_ALLOC_HOST_PTR, 4 * Ki);
-
+  // Assign the constant buffer to the current virtual GPU
+  constantBuffer_->setVirtualDevice(&gpu());
   if ((constantBuffer_ != nullptr) && !constantBuffer_->create(nullptr)) {
     constantBuffer_->release();
     constantBuffer_ = nullptr;
@@ -729,14 +731,14 @@ bool KernelBlitManager::createProgram(Device& device) {
     return false;
   }
 
-  // Assign the constant buffer to the current virtual GPU
-  constantBuffer_->setVirtualDevice(&gpu());
-
   if (dev().settings().xferBufSize_ > 0) {
     xferBufferSize_ = dev().settings().xferBufSize_;
     for (uint i = 0; i < MaxXferBuffers; ++i) {
       // Create internal xfer buffers for image copy optimization
       xferBuffers_[i] = new (*context_) amd::Buffer(*context_, 0, xferBufferSize_);
+
+      // Assign the xfer buffer to the current virtual GPU
+      xferBuffers_[i]->setVirtualDevice(&gpu());
 
       if ((xferBuffers_[i] != nullptr) && !xferBuffers_[i]->create(nullptr)) {
         xferBuffers_[i]->release();
@@ -746,8 +748,6 @@ bool KernelBlitManager::createProgram(Device& device) {
         return false;
       }
 
-      // Assign the xfer buffer to the current virtual GPU
-      xferBuffers_[i]->setVirtualDevice(&gpu());
       //! @note Workaround for conformance allocation test.
       //! Force GPU mem alloc.
       //! Unaligned images require xfer optimization,
@@ -858,10 +858,6 @@ void CalcRowSlicePitches(cl_ulong* pitch, const cl_int* copySize, size_t rowPitc
     // For 1D array rowRitch = slicePitch
     pitch[0] = pitch[1];
   }
-}
-
-static inline void setArgument(amd::Kernel* kernel, size_t index, size_t size, const void* value) {
-  kernel->parameters().set(index, size, value);
 }
 
 bool KernelBlitManager::copyBufferToImageKernel(device::Memory& srcMemory,
@@ -2051,7 +2047,7 @@ amd::Memory* DmaBlitManager::pinHostMemory(const void* hostMem, size_t pinSize,
   }
 
   amdMemory = new (*context_) amd::Buffer(*context_, CL_MEM_USE_HOST_PTR, pinAllocSize);
-
+  amdMemory->setVirtualDevice(&gpu());
   if ((amdMemory != nullptr) && !amdMemory->create(tmpHost, SysMem)) {
     amdMemory->release();
     return nullptr;
@@ -2059,7 +2055,6 @@ amd::Memory* DmaBlitManager::pinHostMemory(const void* hostMem, size_t pinSize,
 
   // Get device memory for this virtual device
   // @note: This will force real memory pinning
-  amdMemory->setVirtualDevice(&gpu());
   Memory* srcMemory = dev().getRocMemory(amdMemory);
 
   if (srcMemory == nullptr) {
@@ -2108,21 +2103,78 @@ Memory* KernelBlitManager::createView(const Memory& parent, cl_image_format form
 }
 
 address KernelBlitManager::captureArguments(const amd::Kernel* kernel) const {
-  const size_t stackSize = kernel->signature().paramsSize();
-  const size_t svmInfoSize = kernel->signature().numParameters() * sizeof(bool);
-  address args = reinterpret_cast<address>(
-      amd::AlignedMemory::allocate(stackSize + svmInfoSize, PARAMETERS_MIN_ALIGNMENT));
-  if (args == nullptr) {
-    LogWarning("Failed to allocate memory for arguments");
-    return nullptr;
-  }
-  memcpy(args, kernel->parameters().values(), kernel->signature().paramsSize());
-  memset(args + stackSize, 0, svmInfoSize);
-  return args;
+  return kernel->parameters().values();
 }
 
 void KernelBlitManager::releaseArguments(address args) const {
-  amd::AlignedMemory::deallocate(args);
+}
+
+bool KernelBlitManager::runScheduler(uint64_t vqVM, amd::Memory* schedulerParam,
+                                     hsa_queue_t* schedulerQueue,
+                                     hsa_signal_t& schedulerSignal,
+                                     uint threads) {
+  size_t globalWorkOffset[1] = {0};
+  size_t globalWorkSize[1] = {threads};
+  size_t localWorkSize[1] = {1};
+
+  amd::NDRangeContainer ndrange(1, globalWorkOffset, globalWorkSize, localWorkSize);
+
+  device::Kernel* devKernel = const_cast<device::Kernel*>(kernels_[Scheduler]->getDeviceKernel(dev()));
+  Kernel& gpuKernel = static_cast<Kernel&>(*devKernel);
+
+  SchedulerParam* sp = reinterpret_cast<SchedulerParam*>(schedulerParam->getHostMem());
+  memset(sp, 0, sizeof(SchedulerParam));
+
+  Memory* schedulerMem = dev().getRocMemory(schedulerParam);
+  sp->kernarg_address = reinterpret_cast<uint64_t>(schedulerMem->getDeviceMemory());
+
+  sp->hidden_global_offset_x = 0;
+  sp->hidden_global_offset_y = 0;
+  sp->hidden_global_offset_z = 0;
+  sp->thread_counter = 0;
+  sp->child_queue = reinterpret_cast<uint64_t>(schedulerQueue);
+  sp->complete_signal = schedulerSignal;
+
+  hsa_signal_t  signal1;
+  signal1 = schedulerSignal;
+  hsa_signal_store_relaxed(signal1, 1);
+
+  sp->scheduler_aql.header = (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+                             (1 << HSA_PACKET_HEADER_BARRIER) |
+                             (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
+                             (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+  sp->scheduler_aql.setup = 1;
+  sp->scheduler_aql.workgroup_size_x = 1;
+  sp->scheduler_aql.workgroup_size_y = 1;
+  sp->scheduler_aql.workgroup_size_z = 1;
+  sp->scheduler_aql.grid_size_x = threads;
+  sp->scheduler_aql.grid_size_y = 1;
+  sp->scheduler_aql.grid_size_z = 1;
+  sp->scheduler_aql.kernel_object = gpuKernel.KernelCodeHandle();
+  sp->scheduler_aql.kernarg_address = (void*)sp->kernarg_address;
+  sp->scheduler_aql.private_segment_size = 0;
+  sp->scheduler_aql.group_segment_size = 0;
+  sp->vqueue_header = vqVM;
+
+  sp->parentAQL = sp->kernarg_address + sizeof(SchedulerParam);
+
+  cl_mem mem = as_cl<amd::Memory>(schedulerParam);
+  setArgument(kernels_[Scheduler], 0, sizeof(cl_mem), &mem);
+
+  address parameters = captureArguments(kernels_[Scheduler]);
+
+  bool result = false;
+  result = gpu().submitKernelInternal(ndrange, *kernels_[Scheduler], parameters, nullptr);
+  releaseArguments(parameters);
+  synchronize();
+
+  if (hsa_signal_wait_acquire(signal1, HSA_SIGNAL_CONDITION_LT, 1, (-1),
+                                HSA_WAIT_STATE_BLOCKED) != 0) {
+    LogWarning("Failed schedulerSignal wait");
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace pal

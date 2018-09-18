@@ -128,7 +128,7 @@ void VirtualGPU::MemoryDependency::validate(VirtualGPU& gpu, const Memory* memor
   }
 
   // Did we reach the limit?
-  if (maxMemObjectsInQueue_ <= (numMemObjectsInQueue_ + 1)) {
+  if (maxMemObjectsInQueue_ <= numMemObjectsInQueue_) {
     flushL1Cache = true;
   }
 
@@ -157,22 +157,36 @@ void VirtualGPU::MemoryDependency::clear(bool all) {
       endMemObjectsInQueue_ = numMemObjectsInQueue_;
     }
 
-    // Preserve all objects from the current kernel
-    for (i = 0, j = endMemObjectsInQueue_; j < numMemObjectsInQueue_; i++, j++) {
-      memObjectsInQueue_[i].start_ = memObjectsInQueue_[j].start_;
-      memObjectsInQueue_[i].end_ = memObjectsInQueue_[j].end_;
-      memObjectsInQueue_[i].readOnly_ = memObjectsInQueue_[j].readOnly_;
+    // If the current launch didn't start from the beginning, then move the data
+    if (0 != endMemObjectsInQueue_) {
+      // Preserve all objects from the current kernel
+      for (i = 0, j = endMemObjectsInQueue_; j < numMemObjectsInQueue_; i++, j++) {
+        memObjectsInQueue_[i].start_ = memObjectsInQueue_[j].start_;
+        memObjectsInQueue_[i].end_ = memObjectsInQueue_[j].end_;
+        memObjectsInQueue_[i].readOnly_ = memObjectsInQueue_[j].readOnly_;
+      }
+    } else if (numMemObjectsInQueue_ >= maxMemObjectsInQueue_) {
+      // note: The array growth shouldn't occur under the normal conditions,
+      // but in a case when SVM path sends the amount of SVM ptrs over
+      // the max size of kernel arguments
+      MemoryState* ptr  = new MemoryState[maxMemObjectsInQueue_ << 1];
+      if (nullptr == ptr) {
+        numMemObjectsInQueue_ = 0;
+        return;
+      }
+      maxMemObjectsInQueue_ <<= 1;
+      memcpy(ptr, memObjectsInQueue_, sizeof(MemoryState) * numMemObjectsInQueue_);
+      delete[] memObjectsInQueue_;
+      memObjectsInQueue_= ptr;
     }
-    // Clear all objects except current kernel
-    memset(&memObjectsInQueue_[i], 0, sizeof(amd::Memory*) * numMemObjectsInQueue_);
+
     numMemObjectsInQueue_ -= endMemObjectsInQueue_;
     endMemObjectsInQueue_ = 0;
   }
 }
 
 bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address params) {
-  static const bool NoAlias = true;
-  const Kernel& hsaKernel = static_cast<const Kernel&>(*(kernel.getDeviceKernel(dev(), NoAlias)));
+  const Kernel& hsaKernel = static_cast<const Kernel&>(*(kernel.getDeviceKernel(dev())));
   const amd::KernelSignature& signature = kernel.signature();
   const amd::KernelParameters& kernelParams = kernel.parameters();
 
@@ -209,7 +223,7 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
   // get svm non arugment information
   void* const* svmPtrArray = reinterpret_cast<void* const*>(params + execInfoOffset);
   for (size_t i = 0; i < count; i++) {
-    memory = amd::SvmManager::FindSvmBuffer(svmPtrArray[i]);
+    memory = amd::MemObjMap::FindMemObj(svmPtrArray[i]);
     if (nullptr == memory) {
       if (!supportFineGrainedSystem) {
         return false;
@@ -236,49 +250,42 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
     }
   }
 
+  amd::Memory* const* memories =
+    reinterpret_cast<amd::Memory* const*>(params + kernelParams.memoryObjOffset());
+
   // Check all parameters for the current kernel
   for (size_t i = 0; i < signature.numParameters(); ++i) {
     const amd::KernelParameterDescriptor& desc = signature.at(i);
     const Kernel::Argument* arg = hsaKernel.hsailArgAt(i);
-    Memory* memory = nullptr;
+    Memory* gpuMem = nullptr;
     bool readOnly = false;
-    amd::Memory* svmMem = nullptr;
+    amd::Memory* mem = nullptr;
 
     // Find if current argument is a buffer
     if ((desc.type_ == T_POINTER) && (arg->addrQual_ != ROC_ADDRESS_LOCAL)) {
-      if (kernelParams.boundToSvmPointer(dev(), params, i)) {
-        svmMem =
-            amd::SvmManager::FindSvmBuffer(*reinterpret_cast<void* const*>(params + desc.offset_));
-        if (!svmMem) {
-          // Sync AQL packets
-          setAqlHeader(kDispatchPacketHeader);
-          // Clear memory dependency state
-          const static bool All = true;
-          memoryDependency().clear(!All);
-          continue;
-        }
-      }
-
-      if (*reinterpret_cast<amd::Memory* const*>(params + desc.offset_) != nullptr) {
-        if (nullptr == svmMem) {
-          memory =
-              static_cast<Memory*>((*reinterpret_cast<amd::Memory* const*>(params + desc.offset_))
-                                       ->getDeviceMemory(dev()));
-        } else {
-          memory = static_cast<Memory*>(svmMem->getDeviceMemory(dev()));
-        }
+      uint32_t index = desc.info_.arrayIndex_;
+      mem = memories[index];
+      if (mem != nullptr) {
+        gpuMem = static_cast<Memory*>(mem->getDeviceMemory(dev()));
         // Don't sync for internal objects,
         // since they are not shared between devices
-        if (memory->owner()->getVirtualDevice() == nullptr) {
+        if (gpuMem->owner()->getVirtualDevice() == nullptr) {
           // Synchronize data with other memory instances if necessary
-          memory->syncCacheFromHost(*this);
+          gpuMem->syncCacheFromHost(*this);
         }
       }
-
-      if (memory != nullptr) {
+      //! This condition is for SVM fine-grain
+      if ((gpuMem == nullptr) && dev().isFineGrainedSystem(true)) {
+        // Sync AQL packets
+        setAqlHeader(kDispatchPacketHeader);
+        // Clear memory dependency state
+        const static bool All = true;
+        memoryDependency().clear(!All);
+        continue;
+      } else if (gpuMem != nullptr) {
         readOnly |= (arg->access_ == ROC_ACCESS_TYPE_RO);
         // Validate memory for a dependency in the queue
-        memoryDependency().validate(*this, memory, readOnly);
+        memoryDependency().validate(*this, gpuMem, readOnly);
       }
     }
   }
@@ -442,6 +449,13 @@ bool VirtualGPU::releaseGpuMemoryFence() {
 VirtualGPU::VirtualGPU(Device& device)
     : device::VirtualDevice(device),
       roc_device_(device),
+      virtualQueue_(nullptr),
+      deviceQueueSize_(0),
+      maskGroups_(0),
+      schedulerThreads_(0),
+      schedulerParam_(nullptr),
+      schedulerQueue_(nullptr),
+      schedulerSignal_({0}),
       index_(device.numOfVgpus_++)  // Virtual gpu unique index incrementing
 {
   gpu_device_ = device.getBackendDevice();
@@ -469,6 +483,22 @@ VirtualGPU::~VirtualGPU() {
   if (printfdbg_ != nullptr) {
     delete printfdbg_;
     printfdbg_ = nullptr;
+  }
+
+  if (0 != schedulerSignal_.handle) {
+    hsa_signal_destroy(schedulerSignal_);
+  }
+
+  if (nullptr != schedulerQueue_) {
+    hsa_queue_destroy(schedulerQueue_);
+  }
+
+  if (nullptr != schedulerParam_) {
+    schedulerParam_->release();
+  }
+
+  if (nullptr != virtualQueue_) {
+    virtualQueue_->release();
   }
 
   --roc_device_.numOfVgpus_;  // Virtual gpu unique index decrementing
@@ -799,13 +829,31 @@ void VirtualGPU::submitReadMemory(amd::ReadMemoryCommand& cmd) {
       break;
     }
     case CL_COMMAND_READ_BUFFER_RECT: {
-      result = blitMgr().readBufferRect(*devMem, dst, cmd.bufRect(), cmd.hostRect(), size,
-                                        cmd.isEntireMemory());
+      amd::BufferRect hostbufferRect;
+      amd::Coord3D region(0);
+      amd::Coord3D hostOrigin(cmd.hostRect().start_ + offset);
+      hostbufferRect.create(hostOrigin.c, size.c, cmd.hostRect().rowPitch_,
+                            cmd.hostRect().slicePitch_);
+      if (hostMemory != nullptr) {
+        result = blitMgr().copyBufferRect(*devMem, *hostMemory, cmd.bufRect(), hostbufferRect,
+                                          size, cmd.isEntireMemory());
+      } else {
+        result = blitMgr().readBufferRect(*devMem, dst, cmd.bufRect(), cmd.hostRect(), size,
+                                          cmd.isEntireMemory());
+      }
       break;
     }
     case CL_COMMAND_READ_IMAGE: {
-      result = blitMgr().readImage(*devMem, dst, cmd.origin(), size, cmd.rowPitch(),
-                                   cmd.slicePitch(), cmd.isEntireMemory());
+      if (hostMemory != nullptr) {
+        // Accelerated image to buffer transfer without pinning
+        amd::Coord3D dstOrigin(offset);
+        result =
+            blitMgr().copyImageToBuffer(*devMem, *hostMemory, cmd.origin(), dstOrigin, size,
+                                        cmd.isEntireMemory(), cmd.rowPitch(), cmd.slicePitch());
+      } else {
+        result = blitMgr().readImage(*devMem, dst, cmd.origin(), size, cmd.rowPitch(),
+                                    cmd.slicePitch(), cmd.isEntireMemory());
+      }
       break;
     }
     default:
@@ -873,13 +921,31 @@ void VirtualGPU::submitWriteMemory(amd::WriteMemoryCommand& cmd) {
       break;
     }
     case CL_COMMAND_WRITE_BUFFER_RECT: {
-      result = blitMgr().writeBufferRect(src, *devMem, cmd.hostRect(), cmd.bufRect(), size,
-                                         cmd.isEntireMemory());
+      amd::BufferRect hostbufferRect;
+      amd::Coord3D region(0);
+      amd::Coord3D hostOrigin(cmd.hostRect().start_ + offset);
+      hostbufferRect.create(hostOrigin.c, size.c, cmd.hostRect().rowPitch_,
+                            cmd.hostRect().slicePitch_);
+      if (hostMemory != nullptr) {
+        result = blitMgr().copyBufferRect(*hostMemory, *devMem, hostbufferRect, cmd.bufRect(),
+                                          size, cmd.isEntireMemory());
+      } else {
+        result = blitMgr().writeBufferRect(src, *devMem, cmd.hostRect(), cmd.bufRect(), size,
+                                          cmd.isEntireMemory());
+      }
       break;
     }
     case CL_COMMAND_WRITE_IMAGE: {
-      result = blitMgr().writeImage(src, *devMem, cmd.origin(), size, cmd.rowPitch(),
-                                    cmd.slicePitch(), cmd.isEntireMemory());
+      if (hostMemory != nullptr) {
+        // Accelerated buffer to image transfer without pinning
+        amd::Coord3D srcOrigin(offset);
+        result =
+            blitMgr().copyBufferToImage(*hostMemory, *devMem, srcOrigin, cmd.origin(), size,
+                                        cmd.isEntireMemory(), cmd.rowPitch(), cmd.slicePitch());
+      } else {
+        result = blitMgr().writeImage(src, *devMem, cmd.origin(), size, cmd.rowPitch(),
+                                      cmd.slicePitch(), cmd.isEntireMemory());
+      }
       break;
     }
     default:
@@ -1401,6 +1467,7 @@ void setRuntimeCompilerLocalSize(hsa_kernel_dispatch_packet_t& dispatchPacket,
                                  amd::NDRangeContainer sizes, device::Kernel* devKernel,
                                  const roc::Device& dev) {
 
+  Kernel& gpuKernel = static_cast<Kernel&>(*devKernel);
   const size_t* compile_size = devKernel->workGroupInfo()->compileSize_;
 
   // Todo (sramalin) need to check if compile_size is set to 0 if dimension is not valid
@@ -1425,53 +1492,75 @@ void setRuntimeCompilerLocalSize(hsa_kernel_dispatch_packet_t& dispatchPacket,
       // Find threads per group
       thrPerGrp = devKernel->workGroupInfo()->size_;
 
-      size_t tmp = thrPerGrp;
-      // Split the local workgroup into the most efficient way
-      for (uint d = 0; d < sizes.dimensions(); ++d) {
-          size_t div = tmp;
-          for (; (sizes.global()[d] % div) != 0; div--)
-            ;
-          sizes.local()[d] = div;
-          tmp /= div;
-      }
-
-      // Assuming DWORD access
-      const uint cacheLineMatch = dev.info().globalMemCacheLineSize_ >> 2;
-
-      // Check if partial dispatch is enabled and
-      if (dev.settings().partialDispatch_ &&
-          // we couldn't find optimal workload
-          ((sizes.local().product() % devKernel->workGroupInfo()->wavefrontSize_) != 0 ||
-                // or size is too small for the cache line
-           (sizes.local()[0] < cacheLineMatch))) {
-        size_t maxSize = 0;
-        size_t maxDim = 0;
-        for (uint d = 0; d < sizes.dimensions(); ++d) {
-          if (maxSize < sizes.global()[d]) {
-            maxSize = sizes.global()[d];
-            maxDim = d;
-          }
-        }
-
-        if ((maxDim != 0) && (sizes.global()[0] >= (cacheLineMatch / 2))) {
-          sizes.local()[0] = cacheLineMatch;
-          thrPerGrp /= cacheLineMatch;
-          sizes.local()[maxDim] = thrPerGrp;
-          for (uint d = 1; d < sizes.dimensions(); ++d) {
-            if (d != maxDim) {
-              sizes.local()[d] = 1;
-            }
-          }
+      if (gpuKernel.imageEnable() &&
+          // and thread group is a multiple value of wavefronts
+          ((thrPerGrp % devKernel->workGroupInfo()->wavefrontSize_) == 0) &&
+          // and it's 2 or 3-dimensional workload
+          (sizes.dimensions() > 1) &&
+          ((dev.settings().partialDispatch_) ||
+           (((sizes.global()[0] % 16) == 0) && ((sizes.global()[1] % 16) == 0)))) {
+          // Use 8x8 workgroup size if kernel has image writes)
+        if (gpuKernel.imageWrite() || (thrPerGrp != dev.settings().preferredWorkGroupSize_)) {
+          sizes.local()[0] = 8;
+          sizes.local()[1] = 8;
         }
         else {
-          // Check if a local workgroup has the most optimal size
-          if (thrPerGrp > maxSize) {
-            thrPerGrp = maxSize;
-          }
-          sizes.local()[maxDim] = thrPerGrp;
+          sizes.local()[0] = 16;
+          sizes.local()[1] = 16;
+        }
+        if (sizes.dimensions() == 3)  {
+          sizes.local()[2] = 1;
+        }
+      }
+      else {
+        size_t tmp = thrPerGrp;
+        // Split the local workgroup into the most efficient way
+        for (uint d = 0; d < sizes.dimensions(); ++d) {
+            size_t div = tmp;
+            for (; (sizes.global()[d] % div) != 0; div--)
+              ;
+            sizes.local()[d] = div;
+            tmp /= div;
+        }
+
+        // Assuming DWORD access
+        const uint cacheLineMatch = dev.info().globalMemCacheLineSize_ >> 2;
+
+        // Check if partial dispatch is enabled and
+        if (dev.settings().partialDispatch_ &&
+            // we couldn't find optimal workload
+            ((sizes.local().product() % devKernel->workGroupInfo()->wavefrontSize_) != 0 ||
+                  // or size is too small for the cache line
+             (sizes.local()[0] < cacheLineMatch))) {
+          size_t maxSize = 0;
+          size_t maxDim = 0;
           for (uint d = 0; d < sizes.dimensions(); ++d) {
-            if (d != maxDim) {
-              sizes.local()[d] = 1;
+            if (maxSize < sizes.global()[d]) {
+              maxSize = sizes.global()[d];
+              maxDim = d;
+            }
+          }
+
+          if ((maxDim != 0) && (sizes.global()[0] >= (cacheLineMatch / 2))) {
+            sizes.local()[0] = cacheLineMatch;
+            thrPerGrp /= cacheLineMatch;
+            sizes.local()[maxDim] = thrPerGrp;
+            for (uint d = 1; d < sizes.dimensions(); ++d) {
+              if (d != maxDim) {
+                sizes.local()[d] = 1;
+              }
+            }
+          }
+          else {
+            // Check if a local workgroup has the most optimal size
+            if (thrPerGrp > maxSize) {
+              thrPerGrp = maxSize;
+            }
+            sizes.local()[maxDim] = thrPerGrp;
+            for (uint d = 0; d < sizes.dimensions(); ++d) {
+              if (d != maxDim) {
+                sizes.local()[d] = 1;
+              }
             }
           }
         }
@@ -1528,6 +1617,186 @@ static void fillSampleDescriptor(hsa_ext_sampler_descriptor_t& samplerDescriptor
   }
 }
 
+bool VirtualGPU::createSchedulerParam()
+{
+  if (nullptr != schedulerParam_) {
+    return true;
+  }
+
+  while(true) {
+    schedulerParam_ = new (dev().context()) amd::Buffer(dev().context(), CL_MEM_ALLOC_HOST_PTR, sizeof(SchedulerParam) + sizeof(AmdAqlWrap));
+
+    if ((nullptr != schedulerParam_) && !schedulerParam_->create(nullptr)) {
+      break;
+    }
+
+    // The queue is written by multiple threads of the scheduler kernel
+    if (HSA_STATUS_SUCCESS != hsa_queue_create(gpu_device(), 2048, HSA_QUEUE_TYPE_MULTI,
+        nullptr, nullptr, std::numeric_limits<uint>::max(), std::numeric_limits<uint>::max(),
+        &schedulerQueue_)) {
+      break;
+    }
+
+    hsa_signal_t  signal0 = {0};
+
+    if (HSA_STATUS_SUCCESS != hsa_signal_create(0, 0, nullptr, &signal0)) {
+      break;
+    }
+
+    schedulerSignal_ = signal0;
+
+    Memory* schedulerMem = dev().getRocMemory(schedulerParam_);
+
+    if (nullptr == schedulerMem) {
+      break;
+    }
+
+    schedulerParam_->setVirtualDevice(this);
+    return true;
+  }
+
+  if (0 != schedulerSignal_.handle) {
+    hsa_signal_destroy(schedulerSignal_);
+    schedulerSignal_.handle = 0;
+  }
+
+  if (nullptr != schedulerQueue_) {
+    hsa_queue_destroy(schedulerQueue_);
+    schedulerQueue_ = nullptr;
+  }
+
+  if (nullptr != schedulerParam_) {
+    schedulerParam_->release();
+    schedulerParam_ = nullptr;
+  }
+
+  return false;
+}
+
+uint64_t VirtualGPU::getVQVirtualAddress()
+{
+  Memory* vqMem = dev().getRocMemory(virtualQueue_);
+  return reinterpret_cast<uint64_t>(vqMem->getDeviceMemory());
+}
+
+bool VirtualGPU::createVirtualQueue(uint deviceQueueSize)
+{
+  uint MinDeviceQueueSize = 16 * 1024;
+  deviceQueueSize = std::max(deviceQueueSize, MinDeviceQueueSize);
+
+  maskGroups_ = deviceQueueSize / (512 * Ki);
+  maskGroups_ = (maskGroups_ == 0) ? 1 : maskGroups_;
+
+  // Align the queue size for the multiple dispatch scheduler.
+  // Each thread works with 32 entries * maskGroups
+  uint extra = deviceQueueSize % (sizeof(AmdAqlWrap) * DeviceQueueMaskSize * maskGroups_);
+  if (extra != 0) {
+    deviceQueueSize += (sizeof(AmdAqlWrap) * DeviceQueueMaskSize * maskGroups_) - extra;
+  }
+
+  if (deviceQueueSize_ == deviceQueueSize) {
+    return true;
+  } else {
+    if (0 != deviceQueueSize_) {
+      virtualQueue_->release();
+      virtualQueue_ = nullptr;
+      deviceQueueSize_ = 0;
+      schedulerThreads_ = 0;
+    }
+  }
+
+  uint numSlots = deviceQueueSize / sizeof(AmdAqlWrap);
+  uint allocSize = deviceQueueSize;
+
+  // Add the virtual queue header
+  allocSize += sizeof(AmdVQueueHeader);
+  allocSize = amd::alignUp(allocSize, sizeof(AmdAqlWrap));
+
+  uint argOffs = allocSize;
+
+  // Add the kernel arguments and wait events
+  uint singleArgSize = amd::alignUp(
+      dev().info().maxParameterSize_ + 64 + dev().settings().numWaitEvents_ * sizeof(uint64_t),
+      sizeof(AmdAqlWrap));
+  allocSize += singleArgSize * numSlots;
+
+  uint eventsOffs = allocSize;
+  // Add the device events
+  allocSize += dev().settings().numDeviceEvents_ * sizeof(AmdEvent);
+
+  uint eventMaskOffs = allocSize;
+  // Add mask array for events
+  allocSize += amd::alignUp(dev().settings().numDeviceEvents_, DeviceQueueMaskSize) / 8;
+
+  uint slotMaskOffs = allocSize;
+  // Add mask array for AmdAqlWrap slots
+  allocSize += amd::alignUp(numSlots, DeviceQueueMaskSize) / 8;
+
+  // CL_MEM_ALLOC_HOST_PTR/CL_MEM_READ_WRITE
+  virtualQueue_ = new (dev().context()) amd::Buffer(dev().context(), CL_MEM_READ_WRITE, allocSize);
+
+  if ((nullptr != virtualQueue_) && !virtualQueue_->create(nullptr)) {
+    virtualQueue_->release();
+    return false;
+  }
+
+  Memory* vqMem = dev().getRocMemory(virtualQueue_);
+
+  if (nullptr == vqMem) {
+    return false;
+  }
+
+  uint64_t vqVA = reinterpret_cast<uint64_t>(vqMem->getDeviceMemory());
+  uint64_t pattern = 0;
+  amd::Coord3D origin(0, 0, 0);
+  amd::Coord3D region(virtualQueue_->getSize(), 0, 0);
+
+  if (!dev().xferMgr().fillBuffer(*vqMem, &pattern, sizeof(pattern), origin, region)) {
+    return false;
+  }
+
+  AmdVQueueHeader header = {};
+  // Initialize the virtual queue header
+  header.aql_slot_num = numSlots;
+  header.event_slot_num = dev().settings().numDeviceEvents_;
+  header.event_slot_mask = vqVA + eventMaskOffs;
+  header.event_slots = vqVA + eventsOffs;
+  header.aql_slot_mask = vqVA + slotMaskOffs;
+  header.wait_size = dev().settings().numWaitEvents_;
+  header.arg_size = dev().info().maxParameterSize_ + 64;
+  header.mask_groups = maskGroups_;
+
+  amd::Coord3D origin_header(0);
+  amd::Coord3D region_header(sizeof(AmdVQueueHeader));
+
+  if (!dev().xferMgr().writeBuffer(&header, *vqMem, origin_header, region_header)) {
+    return false;
+  }
+
+  // Go over all slots and perform initialization
+  AmdAqlWrap slot = {};
+  size_t offset = sizeof(AmdVQueueHeader);
+  for (uint i = 0; i < numSlots; ++i) {
+    uint64_t argStart = vqVA + argOffs + i * singleArgSize;
+    amd::Coord3D origin_slot(offset);
+    amd::Coord3D region_slot(sizeof(AmdAqlWrap));
+
+    slot.aql.kernarg_address = reinterpret_cast<void*>(argStart);
+    slot.wait_list = argStart + dev().info().maxParameterSize_ + 64;
+
+    if (!dev().xferMgr().writeBuffer(&slot, *vqMem, origin_slot, region_slot)) {
+      return false;
+    }
+
+    offset += sizeof(AmdAqlWrap);
+  }
+
+  deviceQueueSize_ = deviceQueueSize;
+  schedulerThreads_ = numSlots / (DeviceQueueMaskSize * maskGroups_);
+
+  return true;
+}
+
 bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const amd::Kernel& kernel,
                                       const_address parameters, void* eventHandle) {
   device::Kernel* devKernel = const_cast<device::Kernel*>(kernel.getDeviceKernel(dev()));
@@ -1577,6 +1846,9 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
       }
     }
   }
+
+  amd::Memory* const* memories =
+      reinterpret_cast<amd::Memory* const*>(parameters + kernelParams.memoryObjOffset());
 
   for (int j = 0; j < iteration; j++) {
     // Reset global size for dimension dim if split is needed
@@ -1634,8 +1906,45 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
           argPtr = addArg(argPtr, &bufferPtr, arg->size_, arg->alignment_);
           break;
         }
-        case ROC_ARGTYPE_HIDDEN_DEFAULT_QUEUE:
-        case ROC_ARGTYPE_HIDDEN_COMPLETION_ACTION:
+        case ROC_ARGTYPE_QUEUE: {
+          uint32_t index = signature.at(arg->index_).info_.arrayIndex_;
+          const amd::DeviceQueue* queue = reinterpret_cast<amd::DeviceQueue* const*>(parameters +
+            kernelParams.samplerObjOffset())[index];
+          if (queue == nullptr) {
+            return false;
+          }
+
+          if (!createVirtualQueue(queue->size()) || !createSchedulerParam()) {
+            return false;
+          }
+          gpuKernel.setDynamicParallelFlag(true);
+          uint64_t vqVA = getVQVirtualAddress();
+          argPtr = addArg(argPtr, &vqVA, arg->size_, arg->alignment_);
+          break;
+        }
+        case ROC_ARGTYPE_HIDDEN_DEFAULT_QUEUE: {
+
+          amd::DeviceQueue* defQueue = kernel.program().context().defDeviceQueue(dev());
+
+          if (!createVirtualQueue(defQueue->size()) || !createSchedulerParam()) {
+            return false;
+          }
+          gpuKernel.setDynamicParallelFlag(true);
+          uint64_t vqVA = getVQVirtualAddress();
+          argPtr = addArg(argPtr, &vqVA, arg->size_, arg->alignment_);
+          break;
+        }
+        case ROC_ARGTYPE_HIDDEN_COMPLETION_ACTION: {
+
+          Memory* schedulerMem = dev().getRocMemory(schedulerParam_);
+          AmdAqlWrap* wrap = reinterpret_cast<AmdAqlWrap*>(reinterpret_cast<uint64_t>(schedulerParam_->getHostMem()) + sizeof(SchedulerParam));
+          memset(wrap, 0, sizeof(AmdAqlWrap));
+          wrap->state = AQL_WRAP_DONE;
+
+          uint64_t spVA = reinterpret_cast<uint64_t>(schedulerMem->getDeviceMemory()) + sizeof(SchedulerParam);
+          argPtr = addArg(argPtr, &spVA, arg->size_, arg->alignment_);
+          break;
+        }
         case ROC_ARGTYPE_HIDDEN_NONE: {
           void* zero = 0;
           assert(arg->size_ <= sizeof(zero) && "check the sizes");
@@ -1647,25 +1956,21 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
             // Align the LDS on the alignment requirement of type pointed to
             ldsUsage = amd::alignUp(ldsUsage, arg->pointeeAlignment_);
             argPtr = addArg(argPtr, &ldsUsage, arg->size_, arg->alignment_);
-            ldsUsage += *reinterpret_cast<const size_t*>(srcArgPtr);
+            if (sizeof(uint64_t) == arg->size_) {
+              ldsUsage += *reinterpret_cast<const uint64_t*>(srcArgPtr);
+            } else {
+              ldsUsage += *reinterpret_cast<const uint32_t*>(srcArgPtr);
+            }
             break;
           }
           assert((arg->addrQual_ == ROC_ADDRESS_GLOBAL || arg->addrQual_ == ROC_ADDRESS_CONSTANT) &&
                  "Unsupported address qualifier");
-          if (kernelParams.boundToSvmPointer(dev(), parameters, arg->index_)) {
-            argPtr = addArg(argPtr, srcArgPtr, arg->size_, arg->alignment_);
-            break;
-          }
-          amd::Memory* mem = *reinterpret_cast<amd::Memory* const*>(srcArgPtr);
+          argPtr = addArg(argPtr, srcArgPtr, arg->size_, arg->alignment_);
+          uint32_t index = signature.at(arg->index_).info_.arrayIndex_;
+          amd::Memory* mem = memories[index];
           if (mem == nullptr) {
-            argPtr = addArg(argPtr, srcArgPtr, arg->size_, arg->alignment_);
             break;
           }
-
-          Memory* devMem = static_cast<Memory*>(mem->getDeviceMemory(dev()));
-          //! @todo add multi-devices synchronization when supported.
-          void* globalAddress = devMem->getDeviceMemory();
-          argPtr = addArg(argPtr, &globalAddress, arg->size_, arg->alignment_);
 
           const bool readOnly =
 #if defined(WITH_LIGHTNING_COMPILER)
@@ -1692,7 +1997,8 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
           argPtr = addArg(argPtr, srcArgPtr, arg->size_, arg->alignment_);
           break;
         case ROC_ARGTYPE_IMAGE: {
-          amd::Memory* mem = *reinterpret_cast<amd::Memory* const*>(srcArgPtr);
+          uint32_t index = signature.at(arg->index_).info_.arrayIndex_;
+          amd::Memory* mem = memories[index];
           Image* image = static_cast<Image*>(mem->getDeviceMemory(dev()));
           if (image == nullptr) {
             LogError("Kernel image argument is not an image object");
@@ -1721,7 +2027,9 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
           break;
         }
         case ROC_ARGTYPE_SAMPLER: {
-          amd::Sampler* sampler = *reinterpret_cast<amd::Sampler* const*>(srcArgPtr);
+          uint32_t index = signature.at(arg->index_).info_.arrayIndex_;
+          const amd::Sampler* sampler = reinterpret_cast<amd::Sampler* const*>(parameters +
+            kernelParams.samplerObjOffset())[index];
           if (sampler == nullptr) {
             LogError("Kernel sampler argument is not an sampler object");
             return false;
@@ -1818,6 +2126,13 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
     LogError("\nCould not print data from the printf buffer!");
     return false;
   }
+
+  if (gpuKernel.dynamicParallelism()) {
+    dispatchBarrierPacket(&barrier_packet_);
+    static_cast<KernelBlitManager&>(blitMgr()).runScheduler(
+      getVQVirtualAddress(), schedulerParam_, schedulerQueue_, schedulerSignal_, schedulerThreads_);
+  }
+
   return true;
 }
 /**

@@ -404,7 +404,7 @@ RUNTIME_ENTRY_RET(cl_mem, clCreateBuffer, (cl_context context, cl_mem_flags flag
   amd::Context& amdContext = *as_amd(context);
   amd::Memory* mem = NULL;
   // check if the ptr is in the svm space, if yes, we need return SVM buffer
-  amd::Memory* svmMem = amd::SvmManager::FindSvmBuffer(host_ptr);
+  amd::Memory* svmMem = amd::MemObjMap::FindMemObj(host_ptr);
   if ((NULL != svmMem) && (flags & CL_MEM_USE_HOST_PTR)) {
     size_t svmSize = svmMem->getSize();
     size_t offset = static_cast<address>(host_ptr) - static_cast<address>(svmMem->getSvmPtr());
@@ -608,7 +608,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueReadBuffer,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -748,7 +748,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueWriteBuffer,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -877,7 +877,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueCopyBuffer,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -1060,7 +1060,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueReadBufferRect,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -1244,7 +1244,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueWriteBufferRect,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -1425,7 +1425,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueCopyBufferRect,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -2195,7 +2195,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueReadImage,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -2377,7 +2377,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueWriteImage,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -2556,7 +2556,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueCopyImage,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -2730,7 +2730,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueCopyImageToBuffer,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -2884,7 +2884,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueCopyBufferToImage,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -3060,7 +3060,7 @@ RUNTIME_ENTRY_RET(void*, clEnqueueMapBuffer,
 
   // Wait for possible pending operations
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     *not_null(errcode_ret) = err;
@@ -3325,7 +3325,7 @@ RUNTIME_ENTRY_RET(void*, clEnqueueMapImage,
 
   // Wait for possible pending operations
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     *not_null(errcode_ret) = err;
@@ -3464,7 +3464,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueUnmapMemObject,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -4203,7 +4203,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueFillBuffer,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -4362,7 +4362,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueFillImage,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;
@@ -4513,7 +4513,7 @@ RUNTIME_ENTRY(cl_int, clEnqueueMigrateMemObjects,
   }
 
   amd::Command::EventWaitList eventWaitList;
-  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue.context(), num_events_in_wait_list,
+  cl_int err = amd::clSetEventWaitList(eventWaitList, hostQueue, num_events_in_wait_list,
                                        event_wait_list);
   if (err != CL_SUCCESS) {
     return err;

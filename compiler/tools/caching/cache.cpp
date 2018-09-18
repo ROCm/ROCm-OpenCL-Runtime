@@ -9,6 +9,7 @@
 #include <climits>
 #include <cstring>
 #include <memory>
+#include <malloc.h>
 
 // Specialize std::hash
 struct HashType {
@@ -381,7 +382,7 @@ unsigned long remove_all(const char* directory_name)
     if (strcmp(ep->d_name, "..") && strcmp(ep->d_name, ".")) {
       snprintf(p_buf, PATH_MAX, "%s/%s", directory_name, ep->d_name);
       if (path_is_directory(p_buf)) {
-        if (remove_all(p_buf) == LONG_MIN) {
+        if (remove_all(p_buf) == (unsigned long)LONG_MIN) {
           return LONG_MIN;
         }
       } else {
@@ -418,10 +419,10 @@ bool StringCache::wipeCacheStorage()
     dir += ss.str();
     if (pathExists(dir)) {
 #if _WIN32
-      std::tr2::sys::path mDir(dir);
-      if (remove_all(mDir) == LONG_MIN) {
+      std::experimental::filesystem::path mDir(dir);
+      if (remove_all(mDir) == (unsigned long)LONG_MIN) {
 #else
-      if (remove_all(dir.c_str()) == LONG_MIN) {
+      if (remove_all(dir.c_str()) == (unsigned long)LONG_MIN) {
 #endif
         errorMsg = "Error deleting cache directory";
         return false;

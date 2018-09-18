@@ -80,7 +80,7 @@ class Event : public RuntimeObject {
   static const EventWaitList nullWaitList;
 
   struct ProfilingInfo {
-    ProfilingInfo(bool enabled = false) : enabled_(enabled) {
+    ProfilingInfo(bool enabled = false) : enabled_(enabled), waves_(0) {
       if (enabled) {
         clear();
         callback_ = NULL;
@@ -91,7 +91,8 @@ class Event : public RuntimeObject {
     uint64_t submitted_;
     uint64_t start_;
     uint64_t end_;
-    bool enabled_;
+    bool enabled_;      //!< Profiling enabled for the wave limiter
+    uint32_t waves_;    //!< The number of waves used in a dispatch
     ProfilingCallback* callback_;
     void clear() {
       queued_ = 0ULL;
@@ -99,11 +100,12 @@ class Event : public RuntimeObject {
       start_ = 0ULL;
       end_ = 0ULL;
     }
-    void setCallback(ProfilingCallback* callback) {
+    void setCallback(ProfilingCallback* callback, uint32_t waves) {
       if (callback == NULL) {
         return;
       }
       enabled_ = true;
+      waves_ = waves;
       clear();
       callback_ = callback;
     }
@@ -718,10 +720,9 @@ class MigrateMemObjectsCommand : public Command {
                            const std::vector<amd::Memory*>& memObjects,
                            cl_mem_migration_flags flags)
       : Command(queue, type, eventWaitList), migrationFlags_(flags) {
-    std::vector<amd::Memory*>::const_iterator itr;
-    for (itr = memObjects.begin(); itr != memObjects.end(); itr++) {
-      (*itr)->retain();
-      memObjects_.push_back(*itr);
+    for (const auto& it : memObjects) {
+      it->retain();
+      memObjects_.push_back(it);
     }
   }
 
@@ -729,9 +730,8 @@ class MigrateMemObjectsCommand : public Command {
 
   //! Release all resources associated with this command
   void releaseResources() {
-    std::vector<amd::Memory*>::const_iterator itr;
-    for (itr = memObjects_.begin(); itr != memObjects_.end(); itr++) {
-      (*itr)->release();
+    for (const auto& it : memObjects_) {
+      it->release();
     }
     Command::releaseResources();
   }
@@ -775,7 +775,7 @@ class NDRangeKernelCommand : public Command {
   //! Set the local work size.
   void setLocalWorkSize(const NDRange& local) { sizes_.local() = local; }
 
-  cl_int validateMemory();
+  cl_int captureAndValidate();
 };
 
 class NativeFnCommand : public Command {
@@ -835,18 +835,16 @@ class ExtObjectsCommand : public Command {
   ExtObjectsCommand(HostQueue& queue, const EventWaitList& eventWaitList, cl_uint num_objects,
                     const std::vector<amd::Memory*>& memoryObjects, cl_command_type type)
       : Command(queue, type, eventWaitList) {
-    for (std::vector<amd::Memory*>::const_iterator itr = memoryObjects.begin();
-         itr != memoryObjects.end(); itr++) {
-      (*itr)->retain();
-      memObjects_.push_back(*itr);
+    for (const auto& it : memoryObjects) {
+      it->retain();
+      memObjects_.push_back(it);
     }
   }
 
   //! Release all resources associated with this command
   void releaseResources() {
-    for (std::vector<amd::Memory*>::const_iterator itr = memObjects_.begin();
-         itr != memObjects_.end(); itr++) {
-      (*itr)->release();
+    for (const auto& it : memObjects_) {
+      it->release();
     }
     Command::releaseResources();
   }
@@ -952,9 +950,8 @@ class ThreadTraceMemObjectsCommand : public Command {
   //! Release all resources associated with this command
   void releaseResources() {
     threadTrace_.release();
-    for (std::vector<amd::Memory*>::const_iterator itr = memObjects_.begin();
-         itr != memObjects_.end(); itr++) {
-      (*itr)->release();
+    for (const auto& itr : memObjects_) {
+      itr->release();
     }
     Command::releaseResources();
   }
@@ -1065,19 +1062,17 @@ class MakeBuffersResidentCommand : public Command {
                              const std::vector<amd::Memory*>& memObjects,
                              cl_bus_address_amd* busAddr)
       : Command(queue, type, eventWaitList), busAddresses_(busAddr) {
-    std::vector<amd::Memory*>::const_iterator itr;
-    for (itr = memObjects.begin(); itr != memObjects.end(); itr++) {
-      (*itr)->retain();
-      memObjects_.push_back(*itr);
+    for (const auto& it : memObjects) {
+      it->retain();
+      memObjects_.push_back(it);
     }
   }
 
   virtual void submit(device::VirtualDevice& device) { device.submitMakeBuffersResident(*this); }
 
   void releaseResources() {
-    std::vector<amd::Memory*>::const_iterator itr;
-    for (itr = memObjects_.begin(); itr != memObjects_.end(); itr++) {
-      (*itr)->release();
+    for (const auto& it : memObjects_) {
+      it->release();
     }
     Command::releaseResources();
   }

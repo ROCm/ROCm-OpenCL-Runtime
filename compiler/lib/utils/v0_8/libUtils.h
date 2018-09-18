@@ -9,6 +9,7 @@
 #include <iterator>
 #include <cstdlib>
 #include <cassert>
+#include <cstring>
 #include "library.hpp"
 #include "utils/bif_section_labels.hpp"
 #include "utils/options.hpp"
@@ -262,6 +263,11 @@ aclutUpdateMetadataWithHiddenKernargsNum(aclCompiler* cl, aclBinary* bin, uint32
 }
 #endif
 
+struct TargetMapping;
+
+// Returns the TargetMapping for the specific target device.
+const TargetMapping& getTargetMapping(const aclTargetInfo &target);
+
 inline bool is64BitTarget(const aclTargetInfo& target)
 {
   return (target.arch_id == aclX64 ||
@@ -289,6 +295,15 @@ inline bool isHSAILTarget(const aclTargetInfo& target)
 {
   return (target.arch_id == aclHSAIL || target.arch_id == aclHSAIL64);
 }
+
+const std::string& getLegacyLibName();
+
+inline bool isValidTarget(const aclTargetInfo& target)
+{
+  return (target.arch_id && target.chip_id);
+}
+
+bool isChipSupported(const aclTargetInfo& target);
 
 enum scId {
   SC_AMDIL = 0,

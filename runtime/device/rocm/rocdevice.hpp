@@ -93,13 +93,6 @@ class NullDevice : public amd::Device {
 
   // List of dummy functions which are disabled for NullDevice
 
-  //! Create sub-devices according to the given partition scheme.
-  virtual cl_int createSubDevices(device::CreateSubDevicesInfo& create_info, cl_uint num_entries,
-                                  cl_device_id* devices, cl_uint* num_devices) {
-    ShouldNotReachHere();
-    return CL_INVALID_VALUE;
-  };
-
   //! Create a new virtual device environment.
   virtual device::VirtualDevice* createVirtualDevice(amd::CommandQueue* queue = nullptr) {
     ShouldNotReachHere();
@@ -152,12 +145,6 @@ class NullDevice : public amd::Device {
                        ) const {
     ShouldNotReachHere();
     return;
-  }
-
-  //! Reallocates the provided buffer object
-  virtual bool reallocMemory(amd::Memory& owner) const {
-    ShouldNotReachHere();
-    return false;
   }
 
   //! Acquire external graphics API object in the host thread
@@ -285,16 +272,6 @@ class Device : public NullDevice {
   // need real implementation.
   ///////////////////////////////////////////////////////////////////////////////
 
-  // #ifdef cl_ext_device_fission
-  //! Create sub-devices according to the given partition scheme.
-  virtual cl_int createSubDevices(device::CreateSubDevicesInfo& create_inf, cl_uint num_entries,
-                                  cl_device_id* devices, cl_uint* num_devices) {
-    return CL_INVALID_VALUE;
-  }
-  // #endif // cl_ext_device_fission
-
-  // bool Device::create(CALuint ordinal);
-
   //! Instantiate a new virtual device
   virtual device::VirtualDevice* createVirtualDevice(amd::CommandQueue* queue = nullptr);
 
@@ -307,8 +284,12 @@ class Device : public NullDevice {
   virtual bool createSampler(const amd::Sampler& owner,  //!< abstraction layer sampler object
                              device::Sampler** sampler   //!< device sampler object
                              ) const {
-    //! \todo HSA team has to implement sampler allocation
-    *sampler = nullptr;
+    //! \todo HSA team has to implement sampler allocation.
+    //! Currently allocate the base device class 
+    *sampler = new device::Sampler();
+    if (*sampler == nullptr) {
+      return false;
+    }
     return true;
   }
 
@@ -320,9 +301,6 @@ class Device : public NullDevice {
       ) const {
     return nullptr;
   }
-
-  //! Reallocates the provided buffer object
-  virtual bool reallocMemory(amd::Memory& owner) const { return true; }
 
   //! Acquire external graphics API object in the host thread
   //! Needed for OpenGL objects on CPU device
@@ -366,8 +344,6 @@ class Device : public NullDevice {
   const size_t alloc_granularity() const { return alloc_granularity_; }
 
   const hsa_profile_t agent_profile() const { return agent_profile_; }
-
-  const MesaInterop& mesa() const { return mesa_; }
 
   //! Finds an appropriate map target
   amd::Memory* findMapTarget(size_t size) const;
@@ -417,7 +393,6 @@ class Device : public NullDevice {
   static hsa_agent_t cpu_agent_;
   static std::vector<hsa_agent_t> gpu_agents_;
   std::vector<hsa_agent_t> p2p_agents_;  //!< List of P2P agents available for this device
-  MesaInterop mesa_;
   hsa_agent_t _bkendDevice;
   hsa_profile_t agent_profile_;
   hsa_amd_memory_pool_t group_segment_;

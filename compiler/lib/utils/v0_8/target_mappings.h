@@ -34,9 +34,9 @@ typedef struct _target_mappings_rec {
 } TargetMapping;
 
 const TargetMapping UnknownTarget = { "UnknownFamily", "UnknownChip", "UnknownCodeGen",
-  amd::LibraryUndefined, 0, 0, false, false, FAMILY_UNKNOWN};
+  amd::LibraryUndefined, 0, 0, false, false, FAMILY_UNKNOWN, false};
 const TargetMapping InvalidTarget = { NULL, NULL, NULL,
-  amd::LibraryUndefined, 0, 0, false, false, FAMILY_UNKNOWN};
+  amd::LibraryUndefined, 0, 0, false, false, FAMILY_UNKNOWN, false};
 
 typedef struct _family_map_rec {
   const TargetMapping*  target;
@@ -213,6 +213,10 @@ static const char* calTargetMapping[] = {
       IF(IS_BRAHMA,"","gfx901"),
       IF(IS_BRAHMA,"","gfx902"),
       IF(IS_BRAHMA,"","gfx903"),
+      IF(IS_BRAHMA,"","gfx904"),
+      IF(IS_BRAHMA,"","gfx905"),
+      IF(IS_BRAHMA,"","gfx906"),
+      IF(IS_BRAHMA,"","gfx907"),
     };
 
 #include "utils/v0_8/target_mappings_amdil.h"

@@ -61,7 +61,8 @@ uint64_t Event::recordProfilingInfo(cl_int status, uint64_t timeStamp) {
     default:
       profilingInfo_.end_ = timeStamp;
       if (profilingInfo_.callback_ != NULL) {
-        profilingInfo_.callback_->callback(timeStamp - profilingInfo_.start_);
+        profilingInfo_.callback_->callback(timeStamp - profilingInfo_.start_,
+            profilingInfo_.waves_);
       }
       break;
   }
@@ -224,11 +225,10 @@ const Context& Command::context() const { return queue_->context(); }
 NDRangeKernelCommand::NDRangeKernelCommand(HostQueue& queue, const EventWaitList& eventWaitList,
                                            Kernel& kernel, const NDRangeContainer& sizes)
     : Command(queue, CL_COMMAND_NDRANGE_KERNEL, eventWaitList), kernel_(kernel), sizes_(sizes) {
-  parameters_ = kernel.parameters().capture(queue.device());
   auto& device = queue.device();
   auto devKernel = const_cast<device::Kernel*>(kernel.getDeviceKernel(device));
-  profilingInfo_.setCallback(devKernel->getProfilingCallback(queue.vdev()));
-  fixme_guarantee(parameters_ != NULL && "out of memory");
+  profilingInfo_.setCallback(devKernel->getProfilingCallback(
+    queue.vdev()), devKernel->getWavesPerSH(queue.vdev()));
   kernel_.retain();
 }
 
@@ -277,28 +277,34 @@ cl_int NativeFnCommand::invoke() {
 }
 
 bool OneMemoryArgCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    device::Memory* mem = memory_->getDeviceMemory(queue()->device());
-    if (NULL == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory_->getSize());
-      return false;
-    }
+  // Runtime disables deferred memory allocation for single device.
+  // Hence ignore memory validations
+  if (queue()->context().devices().size() == 1) {
+    return true;
+  }
+  device::Memory* mem = memory_->getDeviceMemory(queue()->device());
+  if (NULL == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory_->getSize());
+    return false;
   }
   return true;
 }
 
 bool TwoMemoryArgsCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    device::Memory* mem = memory1_->getDeviceMemory(queue()->device());
-    if (NULL == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory1_->getSize());
-      return false;
-    }
-    mem = memory2_->getDeviceMemory(queue()->device());
-    if (NULL == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory2_->getSize());
-      return false;
-    }
+  // Runtime disables deferred memory allocation for single device.
+  // Hence ignore memory validations
+  if (queue()->context().devices().size() == 1) {
+    return true;
+  }
+  device::Memory* mem = memory1_->getDeviceMemory(queue()->device());
+  if (NULL == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory1_->getSize());
+    return false;
+  }
+  mem = memory2_->getDeviceMemory(queue()->device());
+  if (NULL == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory2_->getSize());
+    return false;
   }
   return true;
 }
@@ -354,93 +360,57 @@ bool MapMemoryCommand::isEntireMemory() const {
 }
 
 void UnmapMemoryCommand::releaseResources() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    //! @todo This is a workaround to a deadlock on indirect map release.
-    //! Remove this code when CAL will have a refcounter on memory.
-    //! decIndMapCount() has to go back to submitUnmapMemory()
-    device::Memory* mem = memory_->getDeviceMemory(queue()->device());
-    if (NULL != mem) {
-      mem->releaseIndirectMap();
-    }
+  //! @todo This is a workaround to a deadlock on indirect map release.
+  //! Remove this code when CAL will have a refcounter on memory.
+  //! decIndMapCount() has to go back to submitUnmapMemory()
+  device::Memory* mem = memory_->getDeviceMemory(queue()->device());
+  if (NULL != mem) {
+    mem->releaseIndirectMap();
   }
+
   OneMemoryArgCommand::releaseResources();
 }
 
 bool MigrateMemObjectsCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    std::vector<amd::Memory*>::const_iterator itr;
-    for (itr = memObjects_.begin(); itr != memObjects_.end(); itr++) {
-      device::Memory* mem = (*itr)->getDeviceMemory(queue()->device());
-      if (NULL == mem) {
-        LogPrintfError("Can't allocate memory size - 0x%08X bytes!", (*itr)->getSize());
-        return false;
-      }
+  // Runtime disables deferred memory allocation for single device.
+  // Hence ignore memory validations
+  if (queue()->context().devices().size() == 1) {
+    return true;
+  }
+  for (const auto& it : memObjects_) {
+    device::Memory* mem = it->getDeviceMemory(queue()->device());
+    if (NULL == mem) {
+      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", it->getSize());
+      return false;
     }
   }
-
   return true;
 }
 
-cl_int NDRangeKernelCommand::validateMemory() {
+cl_int NDRangeKernelCommand::captureAndValidate() {
   const amd::Device& device = queue()->device();
-  if (device.info().type_ & CL_DEVICE_TYPE_GPU) {
-    // Validate the kernel before submission
-    if (!queue()->device().validateKernel(kernel(), queue()->vdev())) {
-      return CL_OUT_OF_RESOURCES;
-    }
-
-    const amd::KernelSignature& signature = kernel().signature();
-    for (uint i = 0; i != signature.numParameters(); ++i) {
-      const amd::KernelParameterDescriptor& desc = signature.at(i);
-      // Check if it's a memory object
-      if ((desc.type_ == T_POINTER) && (desc.size_ != 0)) {
-        amd::Memory* amdMemory;
-        if (kernel().parameters().boundToSvmPointer(device, parameters_, i)) {
-          // find the real mem object from svm ptr from the list
-          amdMemory = amd::SvmManager::FindSvmBuffer(
-              *reinterpret_cast<void* const*>(parameters() + desc.offset_));
-        } else {
-          amdMemory = *reinterpret_cast<amd::Memory* const*>(parameters() + desc.offset_);
-        }
-        if (amdMemory != NULL) {
-          if (desc.addressQualifier_ == CL_KERNEL_ARG_ADDRESS_CONSTANT) {
-            // Make sure argument size isn't bigger than the device limit
-            if (amdMemory->getSize() > device.info().maxConstantBufferSize_) {
-              LogPrintfError("HW constant buffer is too big (0x%X bytes)!", amdMemory->getSize());
-              return CL_OUT_OF_RESOURCES;
-            }
-          }
-          device::Memory* mem = amdMemory->getDeviceMemory(device);
-          if (!kernel().getDeviceKernel(device)->validateMemory(i, amdMemory)) {
-            if (device.reallocMemory(*amdMemory)) {
-              mem = amdMemory->getDeviceMemory(device);
-            } else {
-              mem = NULL;
-            }
-          }
-          if (NULL == mem) {
-            LogPrintfError("Can't allocate memory size - 0x%08X bytes!", amdMemory->getSize());
-            return CL_MEM_OBJECT_ALLOCATION_FAILURE;
-          }
-        }
-      }
-    }
+  // Validate the kernel before submission
+  if (!queue()->device().validateKernel(kernel(), queue()->vdev())) {
+    return CL_OUT_OF_RESOURCES;
   }
-  return CL_SUCCESS;
+
+  cl_int error;
+  cl_ulong lclMemSize = kernel().getDeviceKernel(device)->workGroupInfo()->localMemSize_;
+  parameters_ = kernel().parameters().capture(device, lclMemSize, &error);
+  return error;
 }
 
 bool ExtObjectsCommand::validateMemory() {
+  // Always process GL objects, even if deferred allocations are disabled,
+  // because processGLResource() calls OGL Acquire().
   bool retVal = true;
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    for (std::vector<amd::Memory*>::const_iterator itr = memObjects_.begin();
-         itr != memObjects_.end(); itr++) {
-      device::Memory* mem = (*itr)->getDeviceMemory(queue()->device());
-      if (NULL == mem) {
-        LogPrintfError("Can't allocate memory size - 0x%08X bytes!", (*itr)->getSize());
-        return false;
-      }
-      retVal = processGLResource(mem);
+  for (const auto& it : memObjects_) {
+    device::Memory* mem = it->getDeviceMemory(queue()->device());
+    if (NULL == mem) {
+      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", it->getSize());
+      return false;
     }
+    retVal = processGLResource(mem);
   }
   return retVal;
 }
@@ -454,36 +424,38 @@ bool ReleaseExtObjectsCommand::processGLResource(device::Memory* mem) {
 }
 
 bool MakeBuffersResidentCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    for (std::vector<amd::Memory*>::const_iterator itr = memObjects_.begin();
-         itr != memObjects_.end(); itr++) {
-      device::Memory* mem = (*itr)->getDeviceMemory(queue()->device());
-      if (NULL == mem) {
-        LogPrintfError("Can't allocate memory size - 0x%08X bytes!", (*itr)->getSize());
-        return false;
-      }
+  // Runtime disables deferred memory allocation for single device.
+  // Hence ignore memory validations
+  if (queue()->context().devices().size() == 1) {
+    return true;
+  }
+  for (const auto& it : memObjects_) {
+    device::Memory* mem = it->getDeviceMemory(queue()->device());
+    if (NULL == mem) {
+      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", it->getSize());
+      return false;
     }
   }
-
   return true;
 }
+
 bool ThreadTraceMemObjectsCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    for (std::vector<amd::Memory*>::const_iterator itr = memObjects_.begin();
-         itr != memObjects_.end(); itr++) {
-      device::Memory* mem = (*itr)->getDeviceMemory(queue()->device());
-      if (NULL == mem) {
-        std::vector<amd::Memory*>::const_iterator tmpItr;
-        for (tmpItr = memObjects_.begin(); tmpItr != itr; tmpItr++) {
-          device::Memory* tmpMem = (*tmpItr)->getDeviceMemory(queue()->device());
-          delete tmpMem;
-        }
-        LogPrintfError("Can't allocate memory size - 0x%08X bytes!", (*itr)->getSize());
-        return false;
+  // Runtime disables deferred memory allocation for single device.
+  // Hence ignore memory validations
+  if (queue()->context().devices().size() == 1) {
+    return true;
+  }
+  for (auto it = memObjects_.cbegin(); it != memObjects_.cend(); it++) {
+    device::Memory* mem = (*it)->getDeviceMemory(queue()->device());
+    if (NULL == mem) {
+      for (auto tmpIt = memObjects_.cbegin(); tmpIt != it; tmpIt++) {
+        device::Memory* tmpMem = (*tmpIt)->getDeviceMemory(queue()->device());
+        delete tmpMem;
       }
+      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", (*it)->getSize());
+      return false;
     }
   }
-
   return true;
 }
 
@@ -530,56 +502,52 @@ void TransferBufferFileCommand::submit(device::VirtualDevice& device) {
 }
 
 bool TransferBufferFileCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    // Check if the destination buffer has direct host access
-    if (!(memory_->getMemFlags() &
-          (CL_MEM_USE_HOST_PTR | CL_MEM_ALLOC_HOST_PTR | CL_MEM_USE_PERSISTENT_MEM_AMD))) {
-      // Allocate staging buffers
-      for (uint i = 0; i < NumStagingBuffers; ++i) {
-        staging_[i] = new (memory_->getContext())
-            Buffer(memory_->getContext(), StagingBufferMemType, StagingBufferSize);
-        if (NULL == staging_[i] || !staging_[i]->create(nullptr)) {
-          return false;
-        }
-        device::Memory* mem = staging_[i]->getDeviceMemory(queue()->device());
-        if (NULL == mem) {
-          LogPrintfError("Can't allocate staging buffer - 0x%08X bytes!", staging_[i]->getSize());
-          return false;
-        }
+  // Check if the destination buffer has direct host access
+  if (!(memory_->getMemFlags() &
+        (CL_MEM_USE_HOST_PTR | CL_MEM_ALLOC_HOST_PTR | CL_MEM_USE_PERSISTENT_MEM_AMD))) {
+    // Allocate staging buffers
+    for (uint i = 0; i < NumStagingBuffers; ++i) {
+      staging_[i] = new (memory_->getContext())
+          Buffer(memory_->getContext(), StagingBufferMemType, StagingBufferSize);
+      if (NULL == staging_[i] || !staging_[i]->create(nullptr)) {
+        return false;
+      }
+      device::Memory* mem = staging_[i]->getDeviceMemory(queue()->device());
+      if (NULL == mem) {
+        LogPrintfError("Can't allocate staging buffer - 0x%08X bytes!", staging_[i]->getSize());
+        return false;
       }
     }
+  }
 
-    device::Memory* mem = memory_->getDeviceMemory(queue()->device());
-    if (NULL == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory_->getSize());
-      return false;
-    }
+  device::Memory* mem = memory_->getDeviceMemory(queue()->device());
+  if (NULL == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory_->getSize());
+    return false;
   }
   return true;
 }
 
 bool CopyMemoryP2PCommand::validateMemory() {
-  if (queue()->device().info().type_ & CL_DEVICE_TYPE_GPU) {
-    const std::vector<Device*>& devices = memory1_->getContext().devices();
-    if (devices.size() != 1) {
-      LogError("Can't allocate memory object for P2P extension");
-      return false;
-    }
-    device::Memory* mem = memory1_->getDeviceMemory(*devices[0]);
-    if (nullptr == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory1_->getSize());
-      return false;
-    }
-    const std::vector<Device*>& devices2 = memory2_->getContext().devices();
-    if (devices2.size() != 1) {
-      LogError("Can't allocate memory object for P2P extension");
-      return false;
-    }
-    mem = memory2_->getDeviceMemory(*devices2[0]);
-    if (nullptr == mem) {
-      LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory2_->getSize());
-      return false;
-    }
+  const std::vector<Device*>& devices = memory1_->getContext().devices();
+  if (devices.size() != 1) {
+    LogError("Can't allocate memory object for P2P extension");
+    return false;
+  }
+  device::Memory* mem = memory1_->getDeviceMemory(*devices[0]);
+  if (nullptr == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory1_->getSize());
+    return false;
+  }
+  const std::vector<Device*>& devices2 = memory2_->getContext().devices();
+  if (devices2.size() != 1) {
+    LogError("Can't allocate memory object for P2P extension");
+    return false;
+  }
+  mem = memory2_->getDeviceMemory(*devices2[0]);
+  if (nullptr == mem) {
+    LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory2_->getSize());
+    return false;
   }
   return true;
 }

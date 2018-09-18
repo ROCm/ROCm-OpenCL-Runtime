@@ -18,6 +18,7 @@
 #include <vector>
 #include <list>
 #include <map>
+#include <unordered_map>
 
 namespace device {
 class Memory;
@@ -124,7 +125,7 @@ class Memory : public amd::RuntimeObject {
   DeviceMemory* deviceMemories_;
 
   //! The device alloced state
-  std::map<const Device*, AllocState> deviceAlloced_;
+  std::unordered_map<const Device*, AllocState> deviceAlloced_;
 
   //! Linked list of destructor callbacks.
   std::atomic<DestructorCallBackEntry*> destructorCallbacks_;
@@ -227,7 +228,8 @@ class Memory : public amd::RuntimeObject {
 
   //! Creates and initializes device (cache) memory for all devices
   virtual bool create(void* initFrom = NULL,    //!< Pointer to the initialization data
-                      bool sysMemAlloc = false  //!< Allocate device memory in system memory
+                      bool sysMemAlloc = false, //!< Allocate device memory in system memory
+                      bool skipAlloc = false    //!< Skip device memory allocation
                       );
 
   //! Allocates device (cache) memory for a specific device
@@ -249,11 +251,6 @@ class Memory : public amd::RuntimeObject {
                        bool allocHostMem,      //!< Force system memory allocation
                        bool forceCopy = false  //!< Force system memory allocation
                        );
-
-  //! Checks if memory was reallocated
-  bool reallocedDeviceMemory(const Device* dev) {
-    return (AllocRealloced == deviceAlloced_[dev]) ? true : false;
-  }
 
   // Accessors
   Memory* parent() const { return parent_; }
@@ -282,19 +279,6 @@ class Memory : public amd::RuntimeObject {
   void signalWrite(const Device* writer);
   //! Force an asynchronous writeback from the most-recent dirty cache to host
   void cacheWriteBack(void);
-
-  //! For CPU device only!
-  //! Base functions for mapping/unmapping GL/D3D objects
-  //! Functions may be left empty, if not needed
-  //! Virtual member function mapExtObjectInCQThread() maps a GL object
-  //! and store CPU memory pointer in Memory::hostMem_.
-  //! Returns true if ok, false 0 if error(s)
-  virtual bool mapExtObjectInCQThread(void) { return true; }
-
-  //! Virtual member functions unmapExtObjectInCQThread() unmaps a GL object
-  //! and clears pointer Memory::hostMem_.
-  //! Returns true if ok, false 0 if error(s)
-  virtual bool unmapExtObjectInCQThread(void) { return true; }
 
   //! Returns true if the specified area covers memory intirely
   virtual bool isEntirelyCovered(const Coord3D& origin,  //!< Origin location of the covered region
@@ -350,7 +334,8 @@ class Buffer : public Memory {
       : Memory(parent, flags, origin, size) {}
 
   bool create(void* initFrom = NULL,    //!< Pointer to the initialization data
-              bool sysMemAlloc = false  //!< Allocate device memory in system memory
+              bool sysMemAlloc = false, //!< Allocate device memory in system memory
+              bool skipAlloc = false    //!< Skip device memory allocation
               );
 
   //! static_cast to Buffer with sanity check
