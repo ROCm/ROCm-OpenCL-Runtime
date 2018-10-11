@@ -263,7 +263,8 @@ aclutUpdateMetadataWithHiddenKernargsNum(aclCompiler* cl, aclBinary* bin, uint32
 }
 #endif
 
-struct TargetMapping;
+struct _target_mappings_rec;
+typedef _target_mappings_rec TargetMapping;
 
 // Returns the TargetMapping for the specific target device.
 const TargetMapping& getTargetMapping(const aclTargetInfo &target);
