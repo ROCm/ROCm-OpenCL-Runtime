@@ -325,6 +325,7 @@ bool LightningProgram::compileImpl(const std::string& sourceCode,
 
   driverOptions.append(" -include-pch " + pch->Name());
   driverOptions.append(" -Xclang -fno-validate-pch");
+  driverOptions.append(" -mno-code-object-v3");
 
   // Tokenize the options string into a vector of strings
   std::istringstream istrstr(driverOptions);
