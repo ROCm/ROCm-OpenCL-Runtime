@@ -123,6 +123,8 @@ bool Device::BlitProgram::create(amd::Device* device, const char* extraKernels,
 #if !defined(WITH_LIGHTNING_COMPILER)
       "-Wf,--force_disable_spir -fno-lib-no-inline "
       "-fno-sc-keep-calls "
+#else
+      "-Wf,-mno-code-object-v3 "
 #endif  // !defined(WITH_LIGHTNING_COMPILER)
       ;
 
