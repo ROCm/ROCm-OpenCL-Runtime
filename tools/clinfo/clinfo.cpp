@@ -120,22 +120,11 @@ jurisdiction and venue of these courts.
 
 bool verbose = false;
 
-inline
-void
-checkErr(cl_int err, const char * name)
-{
-    if (err != CL_SUCCESS) {
-        std::cerr << "ERROR: " <<  name << " (" << err << ")" << std::endl;
-        exit(1);
-    }
-}
-
-
+/// Returns EXIT_SUCCESS on success, EXIT_FAILURE on failure.
 int
 main(int argc, char** argv)
 {
     /* Error flag */
-    cl_int status = 0;
     cl_int err;
 
     //parse input
@@ -146,19 +135,16 @@ main(int argc, char** argv)
         } else if ((strcmp(argv[i], "-h") == 0) ||
                    (strcmp(argv[i], "--help") == 0)){
             std::cout << "Usage is: " << argv[0] << " [-v|--verbose]" << std::endl;
-            return 0;
+            return EXIT_FAILURE;
         }
     }
 
     // Platform info
     std::vector<cl::Platform> platforms;
-    err = cl::Platform::get(&platforms);
-
-    checkErr(
-        platforms.size() == 0 ? -1 : err,
-        "cl::Platform::get()");
 
     try {
+    err = cl::Platform::get(&platforms);
+
     // Iteratate over platforms
     std::cout << "Number of platforms:\t\t\t\t "
               << platforms.size()
@@ -687,7 +673,7 @@ main(int argc, char** argv)
                 cl::Context context(device, cps, NULL, NULL, &err);
                 if (err != CL_SUCCESS) {
                     std::cerr << "Context::Context() failed (" << err << ")\n";
-                    return 1;
+                    return EXIT_FAILURE;
                 }
                 std::string kernelStr("__kernel void hello(){ size_t i =  get_global_id(0); size_t j =  get_global_id(1);}");
                 cl::Program::Sources sources(1, std::make_pair(kernelStr.data(), kernelStr.size()));
@@ -695,7 +681,7 @@ main(int argc, char** argv)
                 cl::Program program = cl::Program(context, sources, &err);
                 if (err != CL_SUCCESS) {
                     std::cerr << "Program::Program() failed (" << err << ")\n";
-                    return 1;
+                    return EXIT_FAILURE;
                 }
 
                 err = program.build(device);
@@ -712,13 +698,13 @@ main(int argc, char** argv)
                     }
 
                     std::cerr << "Program::build() failed (" << err << ")\n";
-                    return 1;
+                    return EXIT_FAILURE;
                 }
 
                 cl::Kernel kernel(program, "hello", &err);
                 if (err != CL_SUCCESS) {
                     std::cerr << "Kernel::Kernel() failed (" << err << ")\n";
-                    return 1;
+                    return EXIT_FAILURE;
                 }
 
                 std::cout << "  Kernel Preferred work group size multiple:\t "
@@ -839,7 +825,8 @@ main(int argc, char** argv)
             << err.err()
             << ")"
             << std::endl;
+        return EXIT_FAILURE;
     }
 
-    return status;
+    return EXIT_SUCCESS;
 }

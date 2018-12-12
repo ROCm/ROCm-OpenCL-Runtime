@@ -63,6 +63,8 @@ static const TargetMapping HSAIL64TargetMapping_0_8[] = {
   UnknownTarget,
   UnknownTarget,
 #endif
+  UnknownTarget,
+  UnknownTarget,
   InvalidTarget
 };
 

@@ -105,11 +105,6 @@ void* Memory::allocMapTarget(const amd::Coord3D& origin, const amd::Coord3D& reg
   if (IsPersistentDirectMap()) {
     return (static_cast<char*>(persistent_host_ptr_) + origin[0]);
   }
-  // Otherwise, check for host memory.
-  void* hostMem = owner()->getHostMem();
-  if (hostMem != nullptr) {
-    return (static_cast<char*>(hostMem) + origin[0]);
-  }
 
   // Allocate one if needed.
   if (indirectMapCount_ == 1) {
@@ -124,7 +119,20 @@ void* Memory::allocMapTarget(const amd::Coord3D& origin, const amd::Coord3D& reg
       return nullptr;
     }
   }
-  return reinterpret_cast<address>(mapMemory_->getHostMem()) + origin[0];
+
+  void* mappedMemory = nullptr;
+  void* hostMem = owner()->getHostMem();
+
+  if (owner()->getSvmPtr() != nullptr) {
+    owner()->commitSvmMemory();
+    mappedMemory = owner()->getSvmPtr();
+  } else if (hostMem != nullptr) {    // Otherwise, check for host memory.
+    return (reinterpret_cast<address>(hostMem) + origin[0]);
+  } else {
+    mappedMemory = reinterpret_cast<address>(mapMemory_->getHostMem()) + origin[0];
+  }
+
+  return mappedMemory;
 }
 
 void Memory::decIndMapCount() {
@@ -184,8 +192,8 @@ bool Memory::createInteropBuffer(GLenum targetType, int miplevel) {
   mesa_glinterop_export_in in = {0};
   mesa_glinterop_export_out out = {0};
 
-  in.size = sizeof(mesa_glinterop_export_in);
-  out.size = sizeof(mesa_glinterop_export_out);
+  in.version = MESA_GLINTEROP_EXPORT_IN_VERSION;
+  out.version = MESA_GLINTEROP_EXPORT_OUT_VERSION;
 
   if (owner()->getMemFlags() & CL_MEM_READ_ONLY)
     in.access = MESA_GLINTEROP_ACCESS_READ_ONLY;
@@ -581,7 +589,28 @@ void Buffer::destroy() {
     return;
   }
 
-  const cl_mem_flags memFlags = owner()->getMemFlags();
+  cl_mem_flags memFlags = owner()->getMemFlags();
+
+  if (owner()->getSvmPtr() != nullptr) {
+    if (dev().forceFineGrain(owner()) ||
+        dev().isFineGrainedSystem(true)) {
+      memFlags |= CL_MEM_SVM_FINE_GRAIN_BUFFER;
+    }
+    const bool isFineGrain = memFlags & CL_MEM_SVM_FINE_GRAIN_BUFFER;
+
+    if (isFineGrain) {
+      dev().hostFree(deviceMemory_, size());
+    } else {
+      dev().memFree(deviceMemory_, size());
+    }
+
+    if (dev().settings().apuSystem_ || !isFineGrain) {
+      const_cast<Device&>(dev()).updateFreeMemory(size(), true);
+    }
+
+    return;
+  }
+
 #ifdef WITH_AMDGPU_PRO
   if ((memFlags & CL_MEM_USE_PERSISTENT_MEM_AMD) && dev().ProEna()) {
     dev().iPro().FreeDmaBuffer(deviceMemory_);
@@ -628,6 +657,41 @@ bool Buffer::create() {
     return false;
   }
 
+  // Allocate backing storage in device local memory unless UHP or AHP are set
+  cl_mem_flags memFlags = owner()->getMemFlags();
+
+  if (owner()->getSvmPtr() != nullptr) {
+    if (dev().forceFineGrain(owner()) ||
+        dev().isFineGrainedSystem(true)) {
+      memFlags |= CL_MEM_SVM_FINE_GRAIN_BUFFER;
+      flags_ |= HostMemoryDirectAccess;
+    }
+    const bool isFineGrain = memFlags & CL_MEM_SVM_FINE_GRAIN_BUFFER;
+
+    if (owner()->getSvmPtr() == reinterpret_cast<void*>(1)) {
+      if (isFineGrain) {
+        deviceMemory_ = dev().hostAlloc(size(), 1, false);
+      } else {
+        deviceMemory_ = dev().deviceLocalAlloc(size());
+      }
+      owner()->setSvmPtr(deviceMemory_);
+    } else {
+      deviceMemory_ = owner()->getSvmPtr();
+    }
+
+    if (!isFineGrain &&
+        (owner()->parent() != nullptr) &&
+        (owner()->parent()->getSvmPtr() != nullptr)) {
+      owner()->parent()->commitSvmMemory();
+    }
+
+    if (dev().settings().apuSystem_ || !isFineGrain) {
+      const_cast<Device&>(dev()).updateFreeMemory(size(), false);
+    }
+
+    return deviceMemory_ != nullptr;
+  }
+
   // Interop buffer
   if (owner()->isInterop()) return createInteropBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -657,9 +721,6 @@ bool Buffer::create() {
 
     return true;
   }
-
-  // Allocate backing storage in device local memory unless UHP or AHP are set
-  const cl_mem_flags memFlags = owner()->getMemFlags();
 
 #ifdef WITH_AMDGPU_PRO
   if ((memFlags & CL_MEM_USE_PERSISTENT_MEM_AMD) && dev().ProEna()) {

@@ -30,6 +30,12 @@ include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/libelf)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/common)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/tools)
 
+if(UNIX)
+    set(ADDITIONAL_LIBRARIES glibc_functions.cpp)
+else()
+    set(ADDITIONAL_LIBRARIES "")
+endif()
+
 add_library(amdocl64 SHARED
   cl_memobj.cpp
   cl_program.cpp
@@ -56,11 +62,11 @@ add_library(amdocl64 SHARED
   cl_context.cpp
   cl_profile_amd.cpp
   cl_p2p_amd.cpp
-  glibc_functions.cpp
   $<TARGET_OBJECTS:oclruntime>
   $<TARGET_OBJECTS:oclrocm>
+  ${ADDITIONAL_LIBRARIES}
 )
 
 target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCR_LIBRARIES})
 
-install(TARGETS amdocl64 LIBRARY DESTINATION lib)
+install(TARGETS amdocl64 LIBRARY DESTINATION lib/x86_64 COMPONENT applications)
