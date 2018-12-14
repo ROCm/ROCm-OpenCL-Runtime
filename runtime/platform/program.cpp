@@ -48,13 +48,16 @@ const Symbol* Program::findSymbol(const char* kernelName) const {
 
 cl_int Program::addDeviceProgram(Device& device, const void* image, size_t length,
                                  amd::option::Options* options) {
-  if (image != NULL &&  !amd::isElfMagic((const char*)image)
-#if !defined(WITH_LIGHTNING_COMPILER)
-      && !aclValidateBinaryImage(
-          image, length, language_ == SPIRV ? BINARY_TYPE_SPIRV : BINARY_TYPE_ELF | BINARY_TYPE_LLVM)
-#endif // !defined(WITH_LIGHTNING_COMPILER)
-  ) {
-    return CL_INVALID_BINARY;
+  if (image != NULL &&  !amd::isElfMagic((const char*)image)) {
+    if (device.settings().useLightning_) {
+      return CL_INVALID_BINARY;
+    }
+#if defined(WITH_COMPILER_LIB)
+    else if (!aclValidateBinaryImage(
+          image, length, language_ == SPIRV ? BINARY_TYPE_SPIRV : BINARY_TYPE_ELF | BINARY_TYPE_LLVM)) {
+      return CL_INVALID_BINARY;
+    }
+#endif // !defined(WITH_COMPILER_LIB)
   }
 
   // Check if the device is already associated with this program
@@ -86,7 +89,7 @@ cl_int Program::addDeviceProgram(Device& device, const void* image, size_t lengt
     assert(symbol && "symbol not found");
     std::string symName = std::string(symbol->str[bif::PRE]) + std::string(symbol->str[bif::POST]);
     size_t symSize = 0;
-    const void* opts = aclExtractSymbol(device.compiler(), binary, &symSize, aclCOMMENT,
+    const void* opts = aclExtractSymbol(device.binCompiler(), binary, &symSize, aclCOMMENT,
                                         symName.c_str(), &errorCode);
     // if we have options from binary and input options was not specified
     if (opts != NULL && emptyOptions) {
@@ -307,9 +310,7 @@ cl_int Program::link(const std::vector<Device*>& devices, size_t numInputs,
         }
         if (isHSAILTarget(*aclutGetTargetInfo(aclBin))) {
           parsedOptions.oVariables->Frontend = "clang";
-#if defined(WITH_LIGHTNING_COMPILER)
-          parsedOptions.oVariables->Legacy = true;
-#endif // defined(WITH_LIGHTNING_COMPILER)
+          parsedOptions.oVariables->Legacy = it->settings().useLightning_;
         } else if (isAMDILTarget(*aclutGetTargetInfo(aclBin))) {
           parsedOptions.oVariables->Frontend = "edg";
         }

@@ -17,10 +17,9 @@ Settings::Settings() {
 
   // Set this to true when we drop the flag
   doublePrecision_ = ::CL_KHR_FP64;
-  pollCompletion_ = ENVVAR_HSA_POLL_KERNEL_COMPLETION;
 
   enableLocalMemory_ = HSA_LOCAL_MEMORY_ENABLE;
-  enableImageHandle_ = true;
+  enableCoarseGrainSVM_ = HSA_ENABLE_COARSE_GRAIN_SVM;
 
   maxWorkGroupSize_ = 1024;
   preferredWorkGroupSize_ = 256;
@@ -32,7 +31,6 @@ Settings::Settings() {
   maxWorkGroupSize3DZ_ = 4;
 
   kernargPoolSize_ = HSA_KERNARG_POOL_SIZE;
-  signalPoolSize_ = HSA_SIGNAL_POOL_SIZE;
 
   // Determine if user is requesting Non-Coherent mode
   // for system memory. By default system memory is
@@ -43,17 +41,7 @@ Settings::Settings() {
   nonCoherentMode = getenv("OPENCL_USE_NC_MEMORY_POLICY");
   enableNCMode_ = (nonCoherentMode) ? true : false;
 
-  // Determine if user wishes to disable support for
-  // partial dispatch. By default support for partial
-  // dispatch is enabled. Users can turn it off for
-  // devices that do not support this feature.
-  //
-  // @note Update appropriate field of device::Settings
-  char* partialDispatch = nullptr;
-  partialDispatch = getenv("OPENCL_DISABLE_PARTIAL_DISPATCH");
-  enablePartialDispatch_ = (partialDispatch) ? false : true;
-  partialDispatch_ = (partialDispatch) ? false : true;
-  commandQueues_ = 100;  //!< Field value set to maximum number
+  commandQueues_ = 200;  //!< Field value set to maximum number
                          //!< concurrent Virtual GPUs for ROCm backend
 
   // Disable image DMA by default (ROCM runtime doesn't support it)
@@ -78,6 +66,8 @@ Settings::Settings() {
   // Device enqueuing settings
   numDeviceEvents_ = 1024;
   numWaitEvents_ = 8;
+
+  useLightning_ = GPU_ENABLE_LC;
 }
 
 bool Settings::create(bool fullProfile, int gfxipVersion) {
@@ -111,23 +101,22 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
 
   // Enable KHR double precision extension
   enableExtension(ClKhrFp64);
-#if !defined(WITH_LIGHTNING_COMPILER)
-  // Also enable AMD double precision extension?
-  enableExtension(ClAmdFp64);
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
   enableExtension(ClKhrSubGroups);
   enableExtension(ClKhrDepthImages);
   enableExtension(ClAmdCopyBufferP2P);
   enableExtension(ClKhrFp16);
   supportDepthsRGB_ = true;
 
-#if defined(WITH_LIGHTNING_COMPILER)
-  enableExtension(ClAmdAssemblyProgram);
-  // enable subnormals for gfx900 and later
-  if (gfxipVersion >= 900) {
+  if (useLightning_) {
+    enableExtension(ClAmdAssemblyProgram);
+    // enable subnormals for gfx900 and later
+    if (gfxipVersion >= 900) {
       singleFpDenorm_ = true;
+    }
+  } else {
+    // Also enable AMD double precision extension?
+    enableExtension(ClAmdFp64);
   }
-#endif  // WITH_LIGHTNING_COMPILER
 
   if (gfxipVersion == 902) {
     apuSystem_ = true;
@@ -164,10 +153,6 @@ void Settings::override() {
 
   if (!flagIsDefault(GPU_MAX_COMMAND_QUEUES)) {
     commandQueues_ = GPU_MAX_COMMAND_QUEUES;
-  }
-
-  if (!flagIsDefault(GPU_IMAGE_DMA)) {
-    commandQueues_ = GPU_IMAGE_DMA;
   }
 
   if (!flagIsDefault(GPU_XFER_BUFFER_SIZE)) {

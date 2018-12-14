@@ -21,7 +21,8 @@ HostQueue::HostQueue(Context& context, Device& device, cl_command_queue_properti
                      uint queueRTCUs, Priority priority)
     : CommandQueue(context, device, properties,
                    device.info().queueProperties_ | CL_QUEUE_COMMAND_INTERCEPT_ENABLE_AMD,
-                   queueRTCUs, priority) {
+                   queueRTCUs, priority),
+      lastEnqueueCommand_(nullptr) {
   if (thread_.state() >= Thread::INITIALIZED) {
     ScopedLock sl(queueLock_);
     thread_.start(this);
@@ -161,6 +162,36 @@ void HostQueue::append(Command& command) {
   command.retain();
   command.setStatus(CL_QUEUED);
   queue_.enqueue(&command);
+}
+
+bool HostQueue::isEmpty() {
+  // Get a snapshot of queue size
+  return queue_.empty();
+}
+
+void HostQueue::setLastQueuedCommand(Command* lastCommand) {
+  // Set last submitted command
+  ScopedLock sl(queueLock_);
+  if (lastEnqueueCommand_ != nullptr) {
+    lastEnqueueCommand_->release();
+  }
+  lastEnqueueCommand_ = lastCommand;
+  if (lastCommand != nullptr) {
+    lastEnqueueCommand_->retain();
+  }
+}
+
+Command* HostQueue::getLastQueuedCommand(bool retain) {
+  // Get last submitted command
+  ScopedLock sl(queueLock_);
+  if (lastEnqueueCommand_ == nullptr) {
+    return nullptr;
+  }
+
+  if (retain) {
+    lastEnqueueCommand_->retain();
+  }
+  return lastEnqueueCommand_;
 }
 
 DeviceQueue::~DeviceQueue() {

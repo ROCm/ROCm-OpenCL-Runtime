@@ -207,11 +207,9 @@ bool NullDevice::initCompiler(bool isOffline) {
       NULL, NULL, NULL, NULL, NULL, NULL
     };
     compilerHandle_ = aclCompilerInit(&opts, &error);
-    if (error != ACL_SUCCESS) {
-#if !defined(WITH_LIGHTNING_COMPILER)
+    if (!GPU_ENABLE_LC && error != ACL_SUCCESS) {
       LogError("Error initializing the compiler handle");
       return false;
-#endif // !defined(WITH_LIGHTNING_COMPILER)
     }
   }
 #endif // defined(WITH_COMPILER_LIB)
@@ -241,7 +239,7 @@ bool NullDevice::init() {
   // Return without initializing offline device list
   return true;
 
-#if !defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_COMPILER_LIB)
   // If there is an HSA enabled device online then skip any offline device
   std::vector<Device*> devices;
   devices = getDevices(CL_DEVICE_TYPE_GPU, false);
@@ -268,9 +266,10 @@ bool NullDevice::init() {
     }
     nullDevice->registerDevice();
   }
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_COMPILER_LIB)
   return true;
 }
+
 NullDevice::~NullDevice() {
   if (info_.extensions_) {
     delete[] info_.extensions_;
@@ -399,19 +398,31 @@ bool Device::init() {
     return false;
   }
 
-  std::vector<bool> selectedDevices;
-  selectedDevices.resize(gpu_agents_.size(), true);
+  std::unordered_map<int, bool> selectedDevices;
+  bool useDeviceList = false;
 
-  if (!flagIsDefault(GPU_DEVICE_ORDINAL)) {
-    std::fill(selectedDevices.begin(), selectedDevices.end(), false);
+  std::string ordinals = IS_HIP ? ((HIP_VISIBLE_DEVICES[0] != '\0') ?
+                         HIP_VISIBLE_DEVICES : CUDA_VISIBLE_DEVICES)
+                         : GPU_DEVICE_ORDINAL;
+  if (ordinals[0] != '\0') {
+    useDeviceList = true;
 
-    std::string ordinals(GPU_DEVICE_ORDINAL);
     size_t end, pos = 0;
     do {
+      bool deviceIdValid = true;
       end = ordinals.find_first_of(',', pos);
-      size_t index = atoi(ordinals.substr(pos, end - pos).c_str());
-      selectedDevices.resize(index + 1);
-      selectedDevices[index] = true;
+      int index = atoi(ordinals.substr(pos, end - pos).c_str());
+      if (index < 0 || static_cast<size_t>(index) >= gpu_agents_.size()) {
+        deviceIdValid = false;
+      }
+
+      if (!deviceIdValid) {
+        // Exit the loop as anything to the right of invalid deviceId
+        // has to be discarded
+        break;
+      }
+
+      selectedDevices[index] = deviceIdValid;
       pos = end + 1;
     } while (end != std::string::npos);
   }
@@ -422,7 +433,7 @@ bool Device::init() {
 
     if (!roc_device) {
       LogError("Error creating new instance of Device on then heap.");
-      return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+      return false;
     }
 
     uint32_t pci_id;
@@ -534,10 +545,11 @@ bool Device::init() {
       }
     }
 
-    if (selectedDevices[ordinal++] &&
-        (flagIsDefault(GPU_DEVICE_NAME) || GPU_DEVICE_NAME == 0 || GPU_DEVICE_NAME[0] == '\0' ||
-         !strcmp(GPU_DEVICE_NAME, roc_device->info_.name_))) {
-      roc_device.release()->registerDevice();
+    if (!useDeviceList && (flagIsDefault(GPU_DEVICE_NAME) || GPU_DEVICE_NAME == 0
+        || GPU_DEVICE_NAME[0] == '\0' || !strcmp(GPU_DEVICE_NAME, roc_device->info_.name_))) {
+        roc_device.release()->registerDevice();
+    } else if (useDeviceList && selectedDevices[ordinal++]) {
+        roc_device.release()->registerDevice();
     }
   }
 
@@ -941,9 +953,12 @@ bool Device::populateOCLDeviceConstants() {
 
     assert(alloc_granularity_ > 0);
   } else {
-    static const cl_ulong kDefaultGlobalMemSize = cl_ulong(1 * Gi);
-    info_.globalMemSize_ = kDefaultGlobalMemSize;
-    info_.maxMemAllocSize_ = info_.globalMemSize_ / 4;
+    // We suppose half of physical memory can be used by GPU in APU system
+    info_.globalMemSize_ =
+        cl_ulong(sysconf(_SC_PAGESIZE)) * cl_ulong(sysconf(_SC_PHYS_PAGES)) / 2;
+    info_.globalMemSize_ = std::max(info_.globalMemSize_, cl_ulong(1 * Gi));
+    info_.maxMemAllocSize_ =
+        cl_ulong(info_.globalMemSize_ * std::min(GPU_SINGLE_ALLOC_PERCENT, 100u) / 100u);
 
     if (HSA_STATUS_SUCCESS !=
         hsa_amd_memory_pool_get_info(
@@ -1032,7 +1047,15 @@ bool Device::populateOCLDeviceConstants() {
   ss <<  ")";
 
   strcpy(info_.driverVersion_, ss.str().c_str());
-  info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"1.2" " ";
+
+  // Allow testing OpenCL 2.1 features with the OPENCL_VERSION variable. We don't accept OPENCL_VERSION
+  // values other than 210, since the default value of OPENCL_VERSION is 200. Accepting 200 would report
+  // 'OpenCL 2.0' by default.
+  if (OPENCL_VERSION == 210) {
+    info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"2.1" " ";
+  } else {
+    info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"1.2" " ";
+  }
 
   info_.builtInKernels_ = "";
   info_.linkerAvailable_ = true;
@@ -1153,14 +1176,14 @@ bool Device::populateOCLDeviceConstants() {
     if (agent_profile_ == HSA_PROFILE_FULL) {
       info_.svmCapabilities_ |= CL_DEVICE_SVM_FINE_GRAIN_SYSTEM;
     }
-#if !defined(WITH_LIGHTNING_COMPILER)
-    // Report atomics capability based on GFX IP, control on Hawaii
-    // and Vega10.
-    if (info_.hostUnifiedMemory_ ||
-        ((deviceInfo_.gfxipVersion_ >= 800) && (deviceInfo_.gfxipVersion_ < 900))) {
-      info_.svmCapabilities_ |= CL_DEVICE_SVM_ATOMICS;
+    if (!settings().useLightning_) {
+      // Report atomics capability based on GFX IP, control on Hawaii
+      // and Vega10.
+      if (info_.hostUnifiedMemory_ ||
+          ((deviceInfo_.gfxipVersion_ >= 800) && (deviceInfo_.gfxipVersion_ < 900))) {
+        info_.svmCapabilities_ |= CL_DEVICE_SVM_ATOMICS;
+      }
     }
-#endif  // !defined(WITH_LIGHTNING_COMPILER)
   }
 
   if (settings().checkExtension(ClAmdDeviceAttributeQuery)) {
@@ -1267,7 +1290,7 @@ bool Device::bindExternalDevice(uint flags, void* const gfxDevice[], void* gfxCo
   }
 
   mesa_glinterop_device_info info;
-  info.size = sizeof(mesa_glinterop_device_info);
+  info.version = MESA_GLINTEROP_DEVICE_INFO_VERSION;
   if (!MesaInterop::Init(kind)) {
     return false;
   }
@@ -1442,7 +1465,9 @@ device::Memory* Device::createMemory(amd::Memory& owner) const {
   }
 
   // Prepin sysmem buffer for possible data synchronization between CPU and GPU
-  if (!memory->isHostMemDirectAccess() && (owner.getHostMem() != nullptr)) {
+  if (!memory->isHostMemDirectAccess() &&
+      (owner.getHostMem() != nullptr) &&
+      (owner.getSvmPtr() == nullptr)) {
     memory->pinSystemMemory(owner.getHostMem(), owner.getSize());
   }
 
@@ -1520,43 +1545,37 @@ void Device::updateFreeMemory(size_t size, bool free) {
 void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_svm_mem_flags flags,
                        void* svmPtr) const {
   amd::Memory* mem = nullptr;
+
   if (nullptr == svmPtr) {
-    bool atomics = (flags & CL_MEM_SVM_ATOMICS) != 0;
-    void* ptr = hostAlloc(size, alignment, atomics);
-
-    if (ptr != nullptr) {
-      // Copy paste from ORCA code.
-      // create a hidden buffer, which will allocated on the device later
-      mem = new (context) amd::Buffer(context, (CL_MEM_USE_HOST_PTR | (flags & 0xFFFF0000)), size, ptr);
-      if (mem == nullptr) {
-        LogError("failed to create a svm mem object!");
-        return nullptr;
-      }
-
-      if (!mem->create(ptr)) {
-        LogError("failed to create a svm hidden buffer!");
-        mem->release();
-        return nullptr;
-      }
-
-      // add the information to context so that we can use it later.
-      amd::MemObjMap::AddMemObj(ptr, mem);
-
-      return ptr;
-    } else {
+    // create a hidden buffer, which will allocated on the device later
+    mem = new (context) amd::Buffer(context, flags, size, reinterpret_cast<void*>(1));
+    if (mem == nullptr) {
+      LogError("failed to create a svm mem object!");
       return nullptr;
     }
+
+    if (!mem->create(nullptr)) {
+      LogError("failed to create a svm hidden buffer!");
+      mem->release();
+      return nullptr;
+    }
+    // if the device supports SVM FGS, return the committed CPU address directly.
+    Memory* gpuMem = getRocMemory(mem);
+
+    // add the information to context so that we can use it later.
+    amd::MemObjMap::AddMemObj(mem->getSvmPtr(), mem);
+    svmPtr = mem->getSvmPtr();
   } else {
-    // Copy paste from ORCA code.
     // Find the existing amd::mem object
     mem = amd::MemObjMap::FindMemObj(svmPtr);
-
     if (nullptr == mem) {
       return nullptr;
     }
 
-    return svmPtr;
+    svmPtr = mem->getSvmPtr();
   }
+
+  return svmPtr;
 }
 
 void Device::svmFree(void* ptr) const {
@@ -1565,7 +1584,6 @@ void Device::svmFree(void* ptr) const {
   if (nullptr != svmMem) {
     svmMem->release();
     amd::MemObjMap::RemoveMemObj(ptr);
-    hostFree(ptr);
   }
 }
 
@@ -1580,6 +1598,10 @@ VirtualGPU* Device::xferQueue() const {
   }
   xferQueue_->enableSyncBlit();
   return xferQueue_;
+}
+bool Device::SetClockMode(const cl_set_device_clock_mode_input_amd setClockModeInput, cl_set_device_clock_mode_output_amd* pSetClockModeOutput) {
+  bool result = true;
+  return result;
 }
 }
 #endif  // WITHOUT_HSA_BACKEND

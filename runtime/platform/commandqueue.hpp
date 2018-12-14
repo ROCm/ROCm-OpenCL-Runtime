@@ -163,6 +163,8 @@ class HostQueue : public CommandQueue {
  private:
   ConcurrentLinkedQueue<Command*> queue_;  //!< The queue.
 
+  Command* lastEnqueueCommand_;  //!< The last submitted command
+
   //! Await commands and execute them as they become ready.
   void loop(device::VirtualDevice* virtualDevice);
 
@@ -196,11 +198,20 @@ class HostQueue : public CommandQueue {
   //! Finish all queued commands
   void finish();
 
+  //! Check if hostQueue empty snapshot
+  bool isEmpty();
+
   //! Get virtual device for the current command queue
   device::VirtualDevice* vdev() const { return thread_.vdev(); }
 
   //! Return the current queue as the HostQueue
   virtual HostQueue* asHostQueue() { return this; }
+
+  //! Get last enqueued command
+  Command* getLastQueuedCommand(bool retain);
+
+  //! Set last enqueued command
+  void setLastQueuedCommand(Command* lastCommand);
 };
 
 

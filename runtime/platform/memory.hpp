@@ -19,6 +19,7 @@
 #include <list>
 #include <map>
 #include <unordered_map>
+#include <memory>
 
 namespace device {
 class Memory;
@@ -306,6 +307,7 @@ class Memory : public amd::RuntimeObject {
     return svmPtrCommited_;
   }                        //!< svm host address committed accessor;
   void commitSvmMemory();  //!< svm host address committed accessor;
+  void uncommitSvmMemory();
   void setCacheStatus(bool canBeCached) {
     canBeCached_ = canBeCached;
   }                                                     //!< set the memobject cached status;

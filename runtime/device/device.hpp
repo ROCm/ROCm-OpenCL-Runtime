@@ -15,6 +15,9 @@
 #include "amdocl/cl_kernel.h"
 #include "elf/elf.hpp"
 #include "appprofile.hpp"
+#include "devprogram.hpp"
+#include "devkernel.hpp"
+#include "amdocl/cl_profile_amd.h"
 
 #if defined(WITH_LIGHTNING_COMPILER)
 #include "caching/cache.hpp"
@@ -54,7 +57,6 @@ class PerfCounterCommand;
 class ReleaseObjectCommand;
 class StallQueueCommand;
 class Marker;
-class KernelSignature;
 class ThreadTraceCommand;
 class ThreadTraceMemObjectsCommand;
 class SignalCommand;
@@ -67,6 +69,7 @@ class SvmUnmapMemoryCommand;
 class TransferBufferFileCommand;
 class HwDebugManager;
 class Device;
+class CacheCompilation;
 struct KernelParameterDescriptor;
 struct Coord3D;
 
@@ -74,9 +77,6 @@ namespace option {
 class Options;
 }  // option
 
-struct ProfilingCallback : public amd::HeapObject {
-  virtual void callback(ulong duration, uint32_t waves) = 0;
-};
 }
 
 enum OclExtensions {
@@ -176,6 +176,8 @@ static constexpr int AmdVendor = 0x1002;
 namespace device {
 class ClBinary;
 class BlitManager;
+class Program;
+class Kernel;
 
 //! Physical device properties.
 struct Info : public amd::EmbeddedObject {
@@ -427,6 +429,7 @@ struct Info : public amd::EmbeddedObject {
   //! that execute in parallel. All work items from the same work group must be
   //! executed by SIMDs in the same compute unit.
   cl_uint simdPerCU_;
+  cl_uint cuPerShaderArray_;  //!< Number of CUs per shader array
   //! The maximum number of work items from the same work group that can be
   //! executed by a SIMD in parallel
   cl_uint simdWidth_;
@@ -505,20 +508,26 @@ class Settings : public amd::HeapObject {
   uint64_t extensions_;  //!< Supported OCL extensions
   union {
     struct {
-      uint partialDispatch_ : 1;      //!< Enables partial dispatch
+      uint overrideLclSet : 3;        //!< Bit mask to override the local size
+      uint apuSystem_ : 1;            //!< Device is APU system with shared memory
       uint supportRA_ : 1;            //!< Support RA channel order format
       uint waitCommand_ : 1;          //!< Enables a wait for every submitted command
       uint customHostAllocator_ : 1;  //!< True if device has custom host allocator
                                       //  that replaces generic OS allocation routines
       uint supportDepthsRGB_ : 1;     //!< Support DEPTH and sRGB channel order format
       uint enableHwDebug_ : 1;        //!< Enable HW debug support
-      uint reserved_ : 26;
+      uint reportFMAF_ : 1;           //!< Report FP_FAST_FMAF define in CL program
+      uint reportFMA_ : 1;            //!< Report FP_FAST_FMA define in CL program
+      uint singleFpDenorm_ : 1;       //!< Support Single FP Denorm
+      uint useLightning_ : 1;         //!< Enable LC path for this device
+      uint reserved_ : 19;
     };
     uint value_;
   };
 
   uint commandQueues_;  //!< Field value for maximum number
                         //!< concurrent Virtual GPUs for each backend
+
   //! Default constructor
   Settings();
 
@@ -776,302 +785,6 @@ class Sampler : public amd::HeapObject {
   Sampler(const Sampler&);
 };
 
-//! \class DeviceKernel, which will contain the common fields for any device
-class Kernel : public amd::HeapObject {
- public:
-  typedef std::vector<amd::KernelParameterDescriptor> parameters_t;
-
-  //! \struct The device kernel workgroup info structure
-  struct WorkGroupInfo : public amd::EmbeddedObject {
-    size_t size_;                     //!< kernel workgroup size
-    size_t compileSize_[3];           //!< kernel compiled workgroup size
-    cl_ulong localMemSize_;           //!< amount of used local memory
-    size_t preferredSizeMultiple_;    //!< preferred multiple for launch
-    cl_ulong privateMemSize_;         //!< amount of used private memory
-    size_t scratchRegs_;              //!< amount of used scratch registers
-    size_t wavefrontPerSIMD_;         //!< number of wavefronts per SIMD
-    size_t wavefrontSize_;            //!< number of threads per wavefront
-    size_t availableGPRs_;            //!< GPRs available to the program
-    size_t usedGPRs_;                 //!< GPRs used by the program
-    size_t availableSGPRs_;           //!< SGPRs available to the program
-    size_t usedSGPRs_;                //!< SGPRs used by the program
-    size_t availableVGPRs_;           //!< VGPRs available to the program
-    size_t usedVGPRs_;                //!< VGPRs used by the program
-    size_t availableLDSSize_;         //!< available LDS size
-    size_t usedLDSSize_;              //!< used LDS size
-    size_t availableStackSize_;       //!< available stack size
-    size_t usedStackSize_;            //!< used stack size
-    size_t compileSizeHint_[3];       //!< kernel compiled workgroup size hint
-    std::string compileVecTypeHint_;  //!< kernel compiled vector type hint
-    bool uniformWorkGroupSize_;       //!< uniform work group size option
-    size_t wavesPerSimdHint_;         //!< waves per simd hit
-  };
-
-  //! Default constructor
-  Kernel(const std::string& name) : name_(name), signature_(NULL), hsa_(false) {
-    // Instead of memset(&workGroupInfo_, '\0', sizeof(workGroupInfo_));
-    // Due to std::string not being able to be memset to 0
-    workGroupInfo_.size_ = 0;
-    workGroupInfo_.compileSize_[0] = 0;
-    workGroupInfo_.compileSize_[1] = 0;
-    workGroupInfo_.compileSize_[2] = 0;
-    workGroupInfo_.localMemSize_ = 0;
-    workGroupInfo_.preferredSizeMultiple_ = 0;
-    workGroupInfo_.privateMemSize_ = 0;
-    workGroupInfo_.scratchRegs_ = 0;
-    workGroupInfo_.wavefrontPerSIMD_ = 0;
-    workGroupInfo_.wavefrontSize_ = 0;
-    workGroupInfo_.availableGPRs_ = 0;
-    workGroupInfo_.usedGPRs_ = 0;
-    workGroupInfo_.availableSGPRs_ = 0;
-    workGroupInfo_.usedSGPRs_ = 0;
-    workGroupInfo_.availableVGPRs_ = 0;
-    workGroupInfo_.usedVGPRs_ = 0;
-    workGroupInfo_.availableLDSSize_ = 0;
-    workGroupInfo_.usedLDSSize_ = 0;
-    workGroupInfo_.availableStackSize_ = 0;
-    workGroupInfo_.usedStackSize_ = 0;
-    workGroupInfo_.compileSizeHint_[0] = 0;
-    workGroupInfo_.compileSizeHint_[1] = 0;
-    workGroupInfo_.compileSizeHint_[2] = 0;
-    workGroupInfo_.compileVecTypeHint_ = "";
-    workGroupInfo_.uniformWorkGroupSize_ = false;
-    workGroupInfo_.wavesPerSimdHint_ = 0;
-  }
-
-  //! Default destructor
-  virtual ~Kernel();
-
-  //! Returns the kernel info structure
-  const WorkGroupInfo* workGroupInfo() const { return &workGroupInfo_; }
-
-  //! Returns the kernel signature
-  const amd::KernelSignature& signature() const { return *signature_; }
-
-  //! Returns the kernel name
-  const std::string& name() const { return name_; }
-
-  //! Initializes the kernel parameters for the abstraction layer
-  bool createSignature(
-    const parameters_t& params, uint32_t numParameters,
-    uint32_t version);
-
-  //! Returns TRUE if it's a HSA kernel
-  bool hsa() const { return hsa_; }
-
-  void setUniformWorkGroupSize(bool u) { workGroupInfo_.uniformWorkGroupSize_ = u; }
-
-  bool getUniformWorkGroupSize() const { return workGroupInfo_.uniformWorkGroupSize_; }
-
-  void setReqdWorkGroupSize(size_t x, size_t y, size_t z) {
-    workGroupInfo_.compileSize_[0] = x;
-    workGroupInfo_.compileSize_[1] = y;
-    workGroupInfo_.compileSize_[2] = z;
-  }
-
-  size_t getReqdWorkGroupSize(int dim) { return workGroupInfo_.compileSize_[dim]; }
-
-  void setWorkGroupSizeHint(size_t x, size_t y, size_t z) {
-    workGroupInfo_.compileSizeHint_[0] = x;
-    workGroupInfo_.compileSizeHint_[1] = y;
-    workGroupInfo_.compileSizeHint_[2] = z;
-  }
-
-  size_t getWorkGroupSizeHint(int dim) const { return workGroupInfo_.compileSizeHint_[dim]; }
-
-  //! Get profiling callback object
-  virtual amd::ProfilingCallback* getProfilingCallback(const device::VirtualDevice* vdv) {
-    return NULL;
-  }
-
-  virtual uint getWavesPerSH(const device::VirtualDevice* vdv) const {
-      return 0;
-  }
-
-  void setVecTypeHint(const std::string& hint) { workGroupInfo_.compileVecTypeHint_ = hint; }
-
-  void setLocalMemSize(size_t size) { workGroupInfo_.localMemSize_ = size; }
-
-  void setPreferredSizeMultiple(size_t size) { workGroupInfo_.preferredSizeMultiple_ = size; }
-
-  //! Return the build log
-  const std::string& buildLog() const { return buildLog_; }
-
-  static std::string openclMangledName(const std::string& name);
-
- protected:
-  std::string name_;                 //!< kernel name
-  WorkGroupInfo workGroupInfo_;      //!< device kernel info structure
-  amd::KernelSignature* signature_;  //!< kernel signature
-  bool hsa_;                         //!< True if HSA kernel on GPU
-  std::string buildLog_;             //!< build log
- private:
-  //! Disable default copy constructor
-  Kernel(const Kernel&);
-
-  //! Disable operator=
-  Kernel& operator=(const Kernel&);
-};
-
-//! A program object for a specific device.
-class Program : public amd::HeapObject {
- public:
-  typedef std::pair<const void*, size_t> binary_t;
-  typedef std::unordered_map<std::string, Kernel*> kernels_t;
-  // type of the program
-  typedef enum {
-    TYPE_NONE = 0,     // uncompiled
-    TYPE_COMPILED,     // compiled
-    TYPE_LIBRARY,      // linked library
-    TYPE_EXECUTABLE,   // linked executable
-    TYPE_INTERMEDIATE  // intermediate
-  } type_t;
-
- private:
-  //! The device target for this binary.
-  amd::SharedReference<amd::Device> device_;
-
-  kernels_t kernels_;  //!< The kernel entry points this binary.
-
-  type_t type_;  //!< type of this program
-
- protected:
-  ClBinary* clBinary_;                          //!< The CL program binary file
-  std::string llvmBinary_;                      //!< LLVM IR binary code
-  amd::OclElf::oclElfSections elfSectionType_;  //!< LLVM IR binary code is in SPIR format
-  std::string compileOptions_;                  //!< compile/build options.
-  std::string linkOptions_;                     //!< link options.
-  //!< the option arg passed in to clCompileProgram(), clLinkProgram(),
-  //! or clBuildProgram(), whichever is called last
-  std::string lastBuildOptionsArg_;
-  std::string buildLog_;  //!< build log.
-  cl_int buildStatus_;    //!< build status.
-  cl_int buildError_;     //!< build error
-  //! The info target for this binary.
-  aclTargetInfo info_;
-  size_t globalVariableTotalSize_;
-
- public:
-  //! Construct a section.
-  Program(amd::Device& device);
-
-  //! Destroy this binary image.
-  virtual ~Program();
-
-  //! Destroy all the kernels
-  void clear();
-
-  //! Return the compiler options passed to build this program
-  amd::option::Options* getCompilerOptions() const { return programOptions; }
-
-  //! Compile the device program.
-  cl_int compile(const std::string& sourceCode, const std::vector<const std::string*>& headers,
-                 const char** headerIncludeNames, const char* origOptions,
-                 amd::option::Options* options);
-
-  //! Builds the device program.
-  cl_int link(const std::vector<Program*>& inputPrograms, const char* origOptions,
-              amd::option::Options* options);
-
-  //! Builds the device program.
-  cl_int build(const std::string& sourceCode, const char* origOptions,
-               amd::option::Options* options);
-
-  //! Returns the device object, associated with this program.
-  const amd::Device& device() const { return device_(); }
-
-  //! Return the compiler options used to build the program.
-  const std::string& compileOptions() const { return compileOptions_; }
-
-  //! Return the option arg passed in to clCompileProgram(), clLinkProgram(),
-  //! or clBuildProgram(), whichever is called last
-  const std::string lastBuildOptionsArg() const { return lastBuildOptionsArg_; }
-
-  //! Return the build log.
-  const std::string& buildLog() const { return buildLog_; }
-
-  //! Return the build status.
-  cl_build_status buildStatus() const { return buildStatus_; }
-
-  //! Return the build error.
-  cl_int buildError() const { return buildError_; }
-
-  //! Return the symbols vector.
-  const kernels_t& kernels() const { return kernels_; }
-  kernels_t& kernels() { return kernels_; }
-
-  //! Return the binary image.
-  inline const binary_t binary() const;
-  inline binary_t binary();
-
-  //! Returns the CL program binary file
-  ClBinary* clBinary() { return clBinary_; }
-  const ClBinary* clBinary() const { return clBinary_; }
-
-  bool setBinary(const char* binaryIn, size_t size);
-
-  type_t type() const { return type_; }
-
-  void setGlobalVariableTotalSize(size_t size) { globalVariableTotalSize_ = size; }
-
-  size_t globalVariableTotalSize() const { return globalVariableTotalSize_; }
-
- protected:
-  //! pre-compile setup
-  virtual bool initBuild(amd::option::Options* options);
-
-  //! post-compile cleanup
-  virtual bool finiBuild(bool isBuildGood);
-
-  //! Compile the device program.
-  virtual bool compileImpl(const std::string& sourceCode,
-                           const std::vector<const std::string*>& headers,
-                           const char** headerIncludeNames, amd::option::Options* options) = 0;
-
-  //! Link the device program.
-  virtual bool linkImpl(amd::option::Options* options) = 0;
-
-  //! Link the device programs.
-  virtual bool linkImpl(const std::vector<Program*>& inputPrograms, amd::option::Options* options,
-                        bool createLibrary) = 0;
-
-  virtual bool createBinary(amd::option::Options* options) = 0;
-
-  virtual bool createBIFBinary(aclBinary* bin);
-
-  //! Initialize Binary (used only for clCreateProgramWithBinary()).
-  bool initClBinary(const char* binaryIn, size_t size);
-
-  //! Initialize Binary
-  virtual bool initClBinary() = 0;
-
-  //! Release the Binary
-  virtual void releaseClBinary() = 0;
-
-  //! return target info
-  virtual const aclTargetInfo& info(const char* str = "") = 0;
-
-  virtual bool isElf(const char* bin) const = 0;
-
-  //! At linking time, get the set of compile options to be used from
-  //! the set of input program, warn if they have inconsisten compile
-  //! options.
-  bool getCompileOptionsAtLinking(const std::vector<Program*>& inputPrograms,
-                                  const amd::option::Options* linkOptions);
-
-  void setType(type_t newType) { type_ = newType; }
-
- private:
-  //! Disable default copy constructor
-  Program(const Program&);
-
-  //! Disable operator=
-  Program& operator=(const Program&);
-
- public:
-  amd::option::Options* programOptions;
-};
-
 class ClBinary : public amd::HeapObject {
  public:
   enum BinaryImageFormat {
@@ -1080,7 +793,7 @@ class ClBinary : public amd::HeapObject {
   };
 
   //! Constructor
-  ClBinary(const amd::Device& dev, BinaryImageFormat bifVer = BIF_VERSION2);
+  ClBinary(const amd::Device& dev, BinaryImageFormat bifVer = BIF_VERSION3);
 
   //! Destructor
   virtual ~ClBinary();
@@ -1100,7 +813,7 @@ class ClBinary : public amd::HeapObject {
   void resetElfOut();
 
   //! Set elf header information
-  virtual bool setElfTarget() = 0;
+  virtual bool setElfTarget();
 
   // class used in for loading images in new format
   amd::OclElf* elfIn() { return elfIn_; }
@@ -1369,7 +1082,6 @@ class VirtualDevice : public amd::HeapObject {
 
 namespace amd {
 
-
 //! MemoryObject map lookup  class
 class MemObjMap : public AllStatic {
  public:
@@ -1412,6 +1124,7 @@ class Device : public RuntimeObject {
   };
 
   virtual Compiler* compiler() const = 0;
+  virtual Compiler* binCompiler() const { return compiler(); }
 
   Device();
   virtual ~Device();
@@ -1513,16 +1226,6 @@ class Device : public RuntimeObject {
   //! resolves GL depth/msaa buffer
   virtual bool resolveGLMemory(device::Memory*) const { return true; }
 
-  //! Gets a pointer to a region of host-visible memory for use as the target
-  //! of an indirect map for a given memory object
-  virtual void* allocMapTarget(amd::Memory& mem,            //!< Abstraction layer memory object
-                               const amd::Coord3D& origin,  //!< The map location in memory
-                               const amd::Coord3D& region,  //!< The map region in memory
-                               uint mapFlags,               //!< Map flags
-                               size_t* rowPitch = NULL,     //!< Row pitch for the mapped memory
-                               size_t* slicePitch = NULL    //!< Slice for the mapped memory
-                               );
-
   //! Gets free memory on a GPU device
   virtual bool globalFreeMemory(size_t* freeMemory  //!< Free memory information on a GPU device
                                 ) const = 0;
@@ -1561,6 +1264,9 @@ class Device : public RuntimeObject {
     return true;
   };
 
+  virtual bool SetClockMode(const cl_set_device_clock_mode_input_amd setClockModeInput, cl_set_device_clock_mode_output_amd* pSetClockModeOutput) {
+    return true;
+  };
   //! Returns TRUE if the device is available for computations
   bool isOnline() const { return online_; }
 
@@ -1601,6 +1307,10 @@ class Device : public RuntimeObject {
   // P2P devices that are accessible from the current device
   std::vector<cl_device_id> p2pDevices_;
 
+#if defined(WITH_LIGHTNING_COMPILER)
+  amd::CacheCompilation* cacheCompilation() const { return cacheCompilation_.get(); }
+#endif
+
  protected:
   //! Enable the specified extension
   char* getExtensionString();
@@ -1611,6 +1321,10 @@ class Device : public RuntimeObject {
   BlitProgram* blitProgram_;      //!< Blit program info
   static AppProfile appProfile_;  //!< application profile
   HwDebugManager* hwDebugMgr_;    //!< Hardware Debug manager
+#if defined(WITH_LIGHTNING_COMPILER)
+                                  //! Compilation with cache support
+  std::unique_ptr<amd::CacheCompilation> cacheCompilation_;
+#endif
 
  private:
   bool IsTypeMatching(cl_device_type type, bool offlineDevices);
@@ -1623,48 +1337,6 @@ class Device : public RuntimeObject {
 
   Monitor* vaCacheAccess_;                            //!< Lock to serialize VA caching access
   std::map<uintptr_t, device::Memory*>* vaCacheMap_;  //!< VA cache map
-};
-
-struct KernelParameterDescriptor {
-  enum {
-    Value = 0,
-    HiddenNone = 1,
-    HiddenGlobalOffsetX = 2,
-    HiddenGlobalOffsetY = 3,
-    HiddenGlobalOffsetZ = 4,
-    HiddenPrintfBuffer = 5,
-    HiddenDefaultQueue = 6,
-    HiddenCompletionAction = 7,
-    MemoryObject = 8,
-    ReferenceObject = 9,
-    ValueObject = 10,
-    ImageObject = 11,
-    SamplerObject = 12,
-    QueueObject = 13
-  };
-  const char* name_;       //!< The parameter's name in the source
-  clk_value_type_t type_;  //!< The parameter's type
-  size_t offset_;          //!< Its offset in the parameter's stack
-  size_t size_;            //!< Its size in bytes
-  //! Argument's address qualifier
-  cl_kernel_arg_address_qualifier addressQualifier_;
-  //! Argument's access qualifier
-  cl_kernel_arg_access_qualifier accessQualifier_;
-  //! Argument's type qualifier
-  cl_kernel_arg_type_qualifier typeQualifier_;
-  const char* typeName_;   //!< Argument's type name
-  union InfoData {
-    struct {
-      uint32_t oclObject_  : 4;   //!< OCL object type
-      uint32_t readOnly_   : 1;   //!< OCL object is read only, applied to memory only
-      uint32_t rawPointer_ : 1;   //!< Arguments have a raw GPU VA
-      uint32_t defined_    : 1;   //!< The argument was defined by the app
-      uint32_t reserved_   : 1;   //!< reserved
-      uint32_t arrayIndex_ : 24;  //!< Index in the objects array or LDS alignment
-    };
-    uint32_t allValues_;
-    InfoData() : allValues_(0) {}
-  } info_;
 };
 
 #if defined(WITH_LIGHTNING_COMPILER)

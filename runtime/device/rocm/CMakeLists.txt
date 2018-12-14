@@ -13,7 +13,6 @@ add_library(oclrocm OBJECT
   rocprogram.cpp
   rocmemory.cpp
   rocdevice.cpp
-  roccompiler.cpp
   rocblit.cpp
   rockernel.cpp
   rocvirtual.cpp
@@ -46,31 +45,35 @@ foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
   file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc "#include \"${header}\"\n")
 endforeach()
 
+# Generate function to select libraries for a given GFXIP number.
 file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc
-  "static inline std::pair<const void*, size_t>\nget_oclc_isa_version(uint gfxip)\n{\nswitch (gfxip) {\n")
+  "static inline std::tuple<const char*, const void*, size_t> get_oclc_isa_version(uint gfxip) { \
+   switch (gfxip) {\n")
 foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
   if (${AMDGCN_LIB_TARGET} MATCHES "^oclc_isa_version_[0-9]+_lib$")
     string(REGEX REPLACE "^oclc_isa_version_([0-9]+)_lib$" "\\1" gfxip ${AMDGCN_LIB_TARGET})
     file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc
-      "case ${gfxip}: return {oclc_isa_version_${gfxip}_amdgcn, oclc_isa_version_${gfxip}_amdgcn_size}; break;\n")
+      "case ${gfxip}: return std::make_tuple( \"oclc_isa_version_${gfxip}_amdgcn.bc\","
+                "  oclc_isa_version_${gfxip}_amdgcn, oclc_isa_version_${gfxip}_amdgcn_size); break;\n")
   endif()
 endforeach()
 file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc
-  "default: return {(const void*)0,(size_t)0};\n}\n}\n")
+  "default: return std::make_tuple(\"\",(const void*)0,(size_t)0); }\n}\n")
 
 foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
   if (${AMDGCN_LIB_TARGET} MATCHES "oclc_(.*)_on_lib")
     string(REGEX REPLACE "oclc_(.*)_on_lib" "\\1" function ${AMDGCN_LIB_TARGET})
     file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc
-      "static inline std::pair<const char*, size_t> get_oclc_${function}(bool on)\n{ return {"
-                "(const char*)(on ? oclc_${function}_on_amdgcn : oclc_${function}_off_amdgcn),"
-                "on ? oclc_${function}_on_amdgcn_size : oclc_${function}_off_amdgcn_size};}\n")
+      "static inline std::tuple<const char*,const void*,size_t>  get_oclc_${function}(bool on)"
+                " { return std::make_tuple(  on ? \"oclc_${function}_on_lib.bc\" : \"oclc_${function}_off_lib.bc\","
+                "  (const void*)(on ? oclc_${function}_on_amdgcn : oclc_${function}_off_amdgcn),"
+                " on ? oclc_${function}_on_amdgcn_size : oclc_${function}_off_amdgcn_size);  }\n")
   endif()
 endforeach()
 
 # generating opencl*.inc files
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/opencl1.2-c.amdgcn.pch
-  COMMAND clang -cc1 -x cl-header -triple amdgcn-amd-amdhsa-opencl -Werror -O3 -Dcl_khr_fp64 -Dcl_khr_fp16 -DNDEBUG -cl-std=CL1.2 -emit-pch -o ${CMAKE_CURRENT_BINARY_DIR}/opencl1.2-c.amdgcn.pch < ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h 
+  COMMAND clang -cc1 -x cl-header -triple amdgcn-amd-amdhsa -Werror -O3 -DNDEBUG -cl-std=CL1.2 -emit-pch -o ${CMAKE_CURRENT_BINARY_DIR}/opencl1.2-c.amdgcn.pch < ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h
   DEPENDS clang ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h
   COMMENT "Generating opencl1.2-c.amdgcn.pch"
 )
@@ -84,7 +87,7 @@ add_custom_target(opencl1.2-c.amdgcn.inc_target ALL DEPENDS ${CMAKE_CURRENT_BINA
 add_dependencies(oclrocm opencl1.2-c.amdgcn.inc_target)
 
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/opencl2.0-c.amdgcn.pch
-  COMMAND clang -cc1 -x cl-header -triple amdgcn-amd-amdhsa-opencl -Werror -O3 -Dcl_khr_fp64 -Dcl_khr_fp16 -DNDEBUG -cl-std=CL2.0 -emit-pch -o ${CMAKE_CURRENT_BINARY_DIR}/opencl2.0-c.amdgcn.pch < ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h 
+  COMMAND clang -cc1 -x cl-header -triple amdgcn-amd-amdhsa -Werror -O3 -DNDEBUG -cl-std=CL2.0 -emit-pch -o ${CMAKE_CURRENT_BINARY_DIR}/opencl2.0-c.amdgcn.pch < ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h
   DEPENDS clang ${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/lib/Headers/opencl-c.h
   COMMENT "Generating opencl2.0-c.amdgcn.pch"
 )
