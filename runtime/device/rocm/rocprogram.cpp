@@ -7,11 +7,11 @@
 
 #include "utils/options.hpp"
 #include "rockernel.hpp"
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include <gelf.h>
 #include "driver/AmdCompiler.h"
 #include "libraries.amdgcn.inc"
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
 #include "utils/bif_section_labels.hpp"
 #include "amd_hsa_kernel_code.h"
@@ -111,13 +111,14 @@ bool Program::initClBinary(char* binaryIn, size_t size) {
   return clBinary()->setBinary(bin, sz, (decryptedBin != nullptr));
 }
 
-#if defined(WITH_COMPILER_LIB)
 HSAILProgram::HSAILProgram(roc::NullDevice& device) : roc::Program(device) {
   xnackEnabled_ = dev().deviceInfo().xnackEnabled_;
   machineTarget_ = dev().deviceInfo().complibTarget_;
 }
 
+
 HSAILProgram::~HSAILProgram() {
+#if defined(WITH_COMPILER_LIB)
   acl_error error;
   // Free the elf binary
   if (binaryElf_ != nullptr) {
@@ -126,13 +127,11 @@ HSAILProgram::~HSAILProgram() {
       LogWarning("Error while destroying the acl binary \n");
     }
   }
-}
-
-bool HSAILProgram::createBinary(amd::option::Options* options) {
-  return true;
+#endif // defined(WITH_COMPILER_LIB)
 }
 
 bool HSAILProgram::saveBinaryAndSetType(type_t type) {
+#if defined(WITH_COMPILER_LIB)
   void* rawBinary;
   size_t size;
 
@@ -147,10 +146,12 @@ bool HSAILProgram::saveBinaryAndSetType(type_t type) {
 
 // Free memory containing rawBinary
   binaryElf_->binOpts.dealloc(rawBinary);
+#endif // defined(WITH_COMPILER_LIB)
   return true;
 }
 
 bool HSAILProgram::setKernels(amd::option::Options* options, void* binary, size_t binSize) {
+#if defined(WITH_COMPILER_LIB)
   // Stop compilation if it is an offline device - HSA runtime does not
   // support ISA compiled offline
   if (!dev().isOnline()) {
@@ -309,11 +310,11 @@ bool HSAILProgram::setKernels(amd::option::Options* options, void* binary, size_
                                    std::string::npos);
     kernels()[kernelName] = aKernel;
   }
+#endif // defined(WITH_COMPILER_LIB)
   return true;
 }
-#endif // defined(WITH_COMPILER_LIB)
 
-#if defined(WITH_LIGHTNING_COMPILER)
+
 LightningProgram::LightningProgram(roc::NullDevice& device)
   : roc::Program(device) {
   isLC_ = true;
@@ -322,14 +323,17 @@ LightningProgram::LightningProgram(roc::NullDevice& device)
 }
 
 bool LightningProgram::createBinary(amd::option::Options* options) {
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   if (!clBinary()->createElfBinary(options->oVariables->BinEncrypt, type())) {
     LogError("Failed to create ELF binary image!");
     return false;
   }
+#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   return true;
 }
 
 bool LightningProgram::saveBinaryAndSetType(type_t type, void* rawBinary, size_t size) {
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   // Write binary to memory
   if (type == TYPE_EXECUTABLE) {  // handle code object binary
     assert(rawBinary != nullptr && size != 0 && "must pass in the binary");
@@ -346,10 +350,12 @@ bool LightningProgram::saveBinaryAndSetType(type_t type, void* rawBinary, size_t
 
   // Set the type of binary
   setType(type);
+#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   return true;
 }
 
 bool LightningProgram::setKernels(amd::option::Options* options, void* binary, size_t binSize) {
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   // Find the size of global variables from the binary
   if (!FindGlobalVarSize(binary, binSize)) {
     return false;
@@ -488,10 +494,9 @@ bool LightningProgram::setKernels(amd::option::Options* options, void* binary, s
                                    std::string::npos);
     kernels()[kernelName] = aKernel;
   }
-
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   return true;
 }
-#endif  // defined(WITH_LIGHTNING_COMPILER)
 
 }  // namespace roc
 
