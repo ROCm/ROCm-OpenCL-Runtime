@@ -8,11 +8,9 @@
 #include "platform/object.hpp"
 #include "platform/memory.hpp"
 #include "devwavelimiter.hpp"
-#if defined(USE_COMGR_LIBRARY)
-#include "amd_comgr.h"
-#endif
+#include "comgrctx.hpp"
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "driver/AmdCompiler.h"
 //#include "llvm/Support/AMDGPUMetadata.h"
 
@@ -28,7 +26,7 @@ namespace llvm {
 typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
 typedef llvm::AMDGPU::HSAMD::Kernel::Metadata KernelMD;
 //typedef llvm::AMDGPU::HSAMD::Kernel::Arg::Metadata KernelArgMD;
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
 #ifndef LC_METADATA
 typedef char CodeObjectMD;
@@ -117,6 +115,7 @@ class Program : public amd::HeapObject {
 
 #if defined(USE_COMGR_LIBRARY)
   amd_comgr_metadata_node_t* metadata_;   //!< COMgr metadata
+  std::map<std::string,amd_comgr_metadata_node_t> kernelMetadataMap_; //!< Map of kernel metadata
 #else
   CodeObjectMD* metadata_;  //!< Runtime metadata
 #endif
@@ -203,12 +202,21 @@ class Program : public amd::HeapObject {
 
 #if defined(USE_COMGR_LIBRARY)
   const amd_comgr_metadata_node_t* metadata() const { return metadata_; }
+
+  //! Get the kernel metadata
+  const amd_comgr_metadata_node_t* getKernelMetadata(const std::string name) const {
+    auto it = kernelMetadataMap_.find(name);
+    return (it == kernelMetadataMap_.end()) ? nullptr : &(it->second);
+  }
 #else
   const CodeObjectMD* metadata() const { return metadata_; }
 #endif
 
   //! Get the machine target for the program
   const char* machineTarget() const { return machineTarget_; }
+
+  //! Check if xnack is enable
+  const bool xnackEnable() const { return (xnackEnabled_ == 1); }
 
  protected:
   //! pre-compile setup
@@ -264,10 +272,10 @@ class Program : public amd::HeapObject {
 
   void setType(type_t newType) { type_ = newType; }
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   //! Return a new transient compiler instance.
   static std::unique_ptr<amd::opencl_driver::Compiler> newCompilerInstance();
-#endif // defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
   /* \brief Returns the next stage to compile from, based on sections in binary,
   *  also returns completeStages in a vector, which contains at least ACL_TYPE_DEFAULT,
@@ -329,7 +337,7 @@ class Program : public amd::HeapObject {
   //! Create action for the specified language, target and options
   amd_comgr_status_t createAction(const amd_comgr_language_t oclvar,
     const std::string& targetIdent, const std::string& options,
-    amd_comgr_action_info_t* action);
+    amd_comgr_action_info_t* action, bool* hasAction);
 
   //! Create the bitcode of the linked input dataset
   bool linkLLVMBitcode(const amd_comgr_data_set_t inputs,
@@ -346,6 +354,9 @@ class Program : public amd::HeapObject {
   bool compileAndLinkExecutable(const amd_comgr_data_set_t inputs,
     const std::string& options, amd::option::Options* amdOptions,
     char* executable[], size_t* executableSize);
+
+  //! Create the map for the kernel name and its metadata for fast access
+  bool createKernelMetadataMap();
 #endif
 
   //! Disable default copy constructor

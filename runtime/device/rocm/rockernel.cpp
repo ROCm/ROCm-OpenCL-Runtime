@@ -9,13 +9,13 @@
 
 #ifndef WITHOUT_HSA_BACKEND
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "driver/AmdCompiler.h"
 #include "llvm/Support/AMDGPUMetadata.h"
 
 typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
 typedef llvm::AMDGPU::HSAMD::Kernel::Metadata KernelMD;
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
 namespace roc {
 
@@ -31,17 +31,20 @@ Kernel::Kernel(std::string name, Program* prog, const uint64_t& kernelCodeHandle
       kernargSegmentByteSize_(kernargSegmentByteSize),
       kernargSegmentAlignment_(kernargSegmentAlignment) {}
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #if defined(USE_COMGR_LIBRARY)
 bool LightningKernel::init() {
 
   hsa_agent_t hsaDevice = program_->hsaDevice();
 
-  const amd_comgr_metadata_node_t* programMD = static_cast<LightningProgram*>(program_)->metadata();
-  assert(programMD != nullptr);
+  const amd_comgr_metadata_node_t* kernelMetaNode =
+              static_cast<LightningProgram*>(program_)->getKernelMetadata(name());
+  if (kernelMetaNode == nullptr) {
+    return false;
+  }
 
   KernelMD  kernelMD;
-  if (!GetAttrCodePropMetadata(*programMD, KernargSegmentByteSize(), &kernelMD)) {
+  if (!GetAttrCodePropMetadata(*kernelMetaNode, KernargSegmentByteSize(), &kernelMD)) {
     return false;
   }
 
@@ -50,7 +53,11 @@ bool LightningKernel::init() {
   assert(workGroupInfo_.availableLDSSize_ > 0);
 
   // Get the available SGPRs and VGPRs
-  const std::string targetIdent = std::string("amdgcn-amd-amdhsa--")+program_->machineTarget();
+  std::string targetIdent = std::string("amdgcn-amd-amdhsa--")+program_->machineTarget();
+  if (program_->xnackEnable()) {
+    targetIdent.append("+xnack");
+  }
+
   if (!SetAvailableSgprVgpr(targetIdent)) {
     return false;
   }
@@ -85,9 +92,15 @@ bool LightningKernel::init() {
                                                  HSA_EXECUTABLE_SYMBOL_INFO_VARIABLE_ADDRESS,
                                                  &variable_address);
     }
+
     if (hsaStatus == HSA_STATUS_SUCCESS) {
+      const struct RuntimeHandle runtime_handle = {
+        kernelCodeHandle_,
+        workitemPrivateSegmentByteSize(),
+        WorkgroupGroupSegmentByteSize()
+      };
       hsaStatus = hsa_memory_copy(reinterpret_cast<void*>(variable_address),
-                                  &kernelCodeHandle_, variable_size);
+                                  &runtime_handle, variable_size);
     }
 
     if (hsaStatus != HSA_STATUS_SUCCESS) {
@@ -117,6 +130,9 @@ bool LightningKernel::init() {
   }
 
   // handle the printf metadata if any
+  const amd_comgr_metadata_node_t* programMD = static_cast<LightningProgram*>(program_)->metadata();
+  assert(programMD != nullptr);
+
   std::vector<std::string> printfStr;
   if (!GetPrintfStr(*programMD, &printfStr)) {
     return false;
@@ -251,7 +267,7 @@ bool LightningKernel::init() {
   return true;
 }
 #endif  // defined(USE_COMGR_LIBRARY)
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
 #if defined(WITH_COMPILER_LIB)
 bool HSAILKernel::init() {

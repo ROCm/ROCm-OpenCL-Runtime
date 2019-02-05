@@ -19,9 +19,9 @@
 #include "device/rocm/rocblit.hpp"
 #include "device/rocm/rocvirtual.hpp"
 #include "device/rocm/rocprogram.hpp"
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "driver/AmdCompiler.h"
-#endif  // defined(WITH_LIGHTNING_COMPILER)
+#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "device/rocm/rocmemory.hpp"
 #include "device/rocm/rocglinterop.hpp"
 #ifdef WITH_AMDGPU_PRO
@@ -112,6 +112,12 @@ bool NullDevice::create(const AMDDeviceInfo& deviceInfo) {
     LogError("Error creating settings for nullptr HSA device");
     return false;
   }
+
+  if (!ValidateComgr()) {
+    LogError("Code object manager initialization failed!");
+    return false;
+  }
+
   // Report the device name
   ::strcpy(info_.name_, "AMD HSA Device");
   info_.extensions_ = getExtensionString();
@@ -593,6 +599,11 @@ bool Device::create() {
     return false;
   }
 
+  if (!ValidateComgr()) {
+    LogError("Code object manager initialization failed!");
+    return false;
+  }
+
   if (!amd::Device::create()) {
     return false;
   }
@@ -627,10 +638,11 @@ bool Device::create() {
 
   const char* scheduler = nullptr;
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   std::string sch = SchedulerSourceCode;
-  scheduler = sch.c_str();
-
+  if (settings().useLightning_) {
+    scheduler = sch.c_str();
+  }
   //  create compilation object with cache support
   int gfxipMajor = deviceInfo_.gfxipVersion_ / 100;
   int gfxipMinor = deviceInfo_.gfxipVersion_ / 10 % 10;
@@ -727,22 +739,33 @@ bool Device::create() {
 }
 
 device::Program* NullDevice::createProgram(amd::option::Options* options) {
-#if defined(WITH_COMPILER_LIB)
-  return new roc::HSAILProgram(*this);
-#else // !defined(WITH_COMPILER_LIB)
-  return NULL;
-#endif // !defined(WITH_COMPILER_LIB)
+  device::Program* program;
+  if (settings().useLightning_) {
+    program = new LightningProgram(*this);
+  } else {
+    program = new HSAILProgram(*this);
+  }
+
+  if (program == nullptr) {
+    LogError("Memory allocation has failed!");
+  }
+
+  return program;
 }
 
 device::Program* Device::createProgram(amd::option::Options* options) {
-#if defined(WITH_LIGHTNING_COMPILER)
-  if (!compilerHandle_ || !options->oVariables->Legacy) {
-    return new roc::LightningProgram(*this);
+  device::Program* program;
+  if (settings().useLightning_) {
+    program = new LightningProgram(*this);
+  } else {
+    program = new HSAILProgram(*this);
   }
-#endif // defined(WITH_LIGHTNING_COMPILER)
-#if defined(WITH_COMPILER_LIB)
-  return new roc::HSAILProgram(*this);
-#endif // defined(WITH_COMPILER_LIB)
+
+  if (program == nullptr) {
+    LogError("Memory allocation has failed!");
+  }
+
+  return program;
 }
 
 hsa_status_t Device::iterateGpuMemoryPoolCallback(hsa_amd_memory_pool_t pool, void* data) {
@@ -823,7 +846,7 @@ bool Device::populateOCLDeviceConstants() {
 
   std::ostringstream oss;
   oss << "gfx" << gfxipMajor << gfxipMinor << gfxipStepping;
-  if (IS_LIGHTNING && deviceInfo_.xnackEnabled_) {
+  if (settings().useLightning_ && deviceInfo_.xnackEnabled_) {
     oss << "-xnack";
   }
 
@@ -1042,8 +1065,7 @@ bool Device::populateOCLDeviceConstants() {
     return false;
   }
   std::stringstream ss;
-  ss << AMD_BUILD_STRING " (HSA" << major << "." << minor << "," IF(IS_LIGHTNING, "LC", "HSAIL");
-  if (IS_LIGHTNING && compilerHandle_) ss << "*,HSAIL";
+  ss << AMD_BUILD_STRING " (HSA" << major << "." << minor << "," << (settings().useLightning_ ? "LC" : "HSAIL");
   ss <<  ")";
 
   strcpy(info_.driverVersion_, ss.str().c_str());

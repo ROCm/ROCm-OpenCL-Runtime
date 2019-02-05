@@ -19,10 +19,10 @@
 #include "devkernel.hpp"
 #include "amdocl/cl_profile_amd.h"
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "caching/cache.hpp"
 #include "driver/AmdCompiler.h"
-#endif // defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #include "acl.h"
 
 #include "hwdebug.hpp"
@@ -519,8 +519,9 @@ class Settings : public amd::HeapObject {
       uint reportFMAF_ : 1;           //!< Report FP_FAST_FMAF define in CL program
       uint reportFMA_ : 1;            //!< Report FP_FAST_FMA define in CL program
       uint singleFpDenorm_ : 1;       //!< Support Single FP Denorm
+      uint hsailExplicitXnack_ : 1;   //!< Xnack in hsail path for this deivce
       uint useLightning_ : 1;         //!< Enable LC path for this device
-      uint reserved_ : 19;
+      uint reserved_ : 18;
     };
     uint value_;
   };
@@ -1307,9 +1308,12 @@ class Device : public RuntimeObject {
   // P2P devices that are accessible from the current device
   std::vector<cl_device_id> p2pDevices_;
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   amd::CacheCompilation* cacheCompilation() const { return cacheCompilation_.get(); }
 #endif
+
+  //! Checks if OCL runtime can use code object manager for compilation
+  bool ValidateComgr();
 
  protected:
   //! Enable the specified extension
@@ -1321,7 +1325,7 @@ class Device : public RuntimeObject {
   BlitProgram* blitProgram_;      //!< Blit program info
   static AppProfile appProfile_;  //!< application profile
   HwDebugManager* hwDebugMgr_;    //!< Hardware Debug manager
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
                                   //! Compilation with cache support
   std::unique_ptr<amd::CacheCompilation> cacheCompilation_;
 #endif
@@ -1339,7 +1343,7 @@ class Device : public RuntimeObject {
   std::map<uintptr_t, device::Memory*>* vaCacheMap_;  //!< VA cache map
 };
 
-#if defined(WITH_LIGHTNING_COMPILER)
+#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 //! Compilation process with cache support.
 class CacheCompilation : public amd::HeapObject {
  public:
@@ -1376,7 +1380,7 @@ class CacheCompilation : public amd::HeapObject {
   StringCache codeCache_;          //! Cached codes
   const bool isCodeCacheEnabled_;  //! Code cache enable
 };
-#endif // defined(WITH_LIGHTNING_COMPILER)
+#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
 /*! @}
  *  @}
