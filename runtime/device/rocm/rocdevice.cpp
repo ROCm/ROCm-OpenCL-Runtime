@@ -652,7 +652,7 @@ bool Device::create() {
   // with dash as delimiter to be compatible with Windows directory name
   std::ostringstream cacheTarget;
   cacheTarget << "AMD-AMDGPU-" << gfxipMajor << "-" << gfxipMinor << "-" << gfxipStepping;
-  if (deviceInfo_.xnackEnabled_) {
+  if (settings().enableXNACK_) {
     cacheTarget << "-xnack";
   }
 
@@ -846,7 +846,7 @@ bool Device::populateOCLDeviceConstants() {
 
   std::ostringstream oss;
   oss << "gfx" << gfxipMajor << gfxipMinor << gfxipStepping;
-  if (settings().useLightning_ && deviceInfo_.xnackEnabled_) {
+  if (settings().useLightning_ && hsa_settings->enableXNACK_) {
     oss << "-xnack";
   }
 
@@ -1220,6 +1220,14 @@ bool Device::populateOCLDeviceConstants() {
         hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MEMORY_WIDTH, &info_.vramBusBitWidth_)) {
       return false;
     }
+
+    uint32_t max_waves_per_cu;
+    if (HSA_STATUS_SUCCESS !=
+        hsa_agent_get_info(_bkendDevice, (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MAX_WAVES_PER_CU, &max_waves_per_cu)) {
+      return false;
+    }
+
+    info_.maxThreadsPerCU_ = info_.wavefrontWidth_ * max_waves_per_cu;
     uint32_t cache_sizes[4];
     /* FIXIT [skudchad] -  Seems like hardcoded in HSA backend so 0*/
     if (HSA_STATUS_SUCCESS !=
@@ -1562,6 +1570,59 @@ void Device::updateFreeMemory(size_t size, bool free) {
   else {
     freeMem_ -= size;
   }
+}
+
+amd::Memory *Device::IpcAttach(const void* handle, size_t mem_size, unsigned int flags, void** dev_ptr) const {
+  amd::Memory* amd_mem_obj = nullptr;
+  hsa_status_t hsa_status = HSA_STATUS_SUCCESS;
+
+  /* Retrieve the devPtr from the handle */
+  hsa_agent_t hsa_agent = getBackendDevice();
+  hsa_status
+    = hsa_amd_ipc_memory_attach(reinterpret_cast<const hsa_amd_ipc_memory_t*>(handle),
+                                mem_size, 1, &hsa_agent, dev_ptr);
+
+  if (hsa_status != HSA_STATUS_SUCCESS) {
+    LogError("[OCL] HSA failed to attach IPC memory");
+    return nullptr;
+  }
+
+  /* Create an amd Memory object for the pointer */
+  amd_mem_obj = new (context()) amd::Buffer(context(), flags, mem_size, *dev_ptr);
+  if (amd_mem_obj == nullptr) {
+    LogError("[OCL] failed to create a mem object!");
+    return nullptr;
+  }
+
+  if (!amd_mem_obj->create(nullptr)) {
+    LogError("[OCL] failed to create a svm hidden buffer!");
+    amd_mem_obj->release();
+    return nullptr;
+  }
+
+  return amd_mem_obj;
+}
+
+void Device::IpcDetach (amd::Memory& memory) const {
+  void* dev_ptr = nullptr;
+  hsa_status_t hsa_status = HSA_STATUS_SUCCESS;
+
+  if(memory.getSvmPtr() != nullptr) {
+    dev_ptr = memory.getSvmPtr();
+  } else if (memory.getHostMem() != nullptr) {
+    dev_ptr = memory.getHostMem();
+  } else {
+    ShouldNotReachHere();
+  }
+
+  /*Detach the memory from HSA */
+  hsa_status = hsa_amd_ipc_memory_detach(dev_ptr);
+  if (hsa_status != HSA_STATUS_SUCCESS) {
+    LogError("[OCL] HSA failed to detach memory !");
+    return;
+  }
+
+  memory.release();
 }
 
 void* Device::svmAlloc(amd::Context& context, size_t size, size_t alignment, cl_svm_mem_flags flags,
