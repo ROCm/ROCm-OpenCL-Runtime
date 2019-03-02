@@ -500,6 +500,9 @@ struct Info : public amd::EmbeddedObject {
   uint32_t pcieDeviceId_;
   //! Revision ID
   uint32_t pcieRevisionId_;
+
+  //! Max numbers of threads per CU
+  cl_uint maxThreadsPerCU_;
 };
 
 //! Device settings
@@ -521,7 +524,8 @@ class Settings : public amd::HeapObject {
       uint singleFpDenorm_ : 1;       //!< Support Single FP Denorm
       uint hsailExplicitXnack_ : 1;   //!< Xnack in hsail path for this deivce
       uint useLightning_ : 1;         //!< Enable LC path for this device
-      uint reserved_ : 18;
+      uint enableXNACK_ : 1;          //!< Enable XNACK feature
+      uint reserved_ : 17;
     };
     uint value_;
   };
@@ -724,6 +728,10 @@ class Memory : public amd::HeapObject {
   bool isCpuUncached() const { return (flags_ & MemoryCpuUncached) ? true : false; }
 
   virtual uint64_t virtualAddress() const { return 0; }
+
+  virtual void IpcCreate(size_t offset, size_t* mem_size, void* handle) const {
+    ShouldNotReachHere();
+  }
 
  protected:
   enum Flags {
@@ -1314,6 +1322,15 @@ class Device : public RuntimeObject {
 
   //! Checks if OCL runtime can use code object manager for compilation
   bool ValidateComgr();
+
+  virtual amd::Memory *IpcAttach(const void* handle, size_t mem_size, unsigned int flags, void** dev_ptr) const {
+    ShouldNotReachHere();
+    return nullptr;
+  }
+
+  virtual void IpcDetach(amd::Memory& memory) const {
+    ShouldNotReachHere();
+  }
 
  protected:
   //! Enable the specified extension
