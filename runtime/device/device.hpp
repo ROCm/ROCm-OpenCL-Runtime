@@ -19,10 +19,10 @@
 #include "devkernel.hpp"
 #include "amdocl/cl_profile_amd.h"
 
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 #include "caching/cache.hpp"
 #include "driver/AmdCompiler.h"
-#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#endif // defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 #include "acl.h"
 
 #include "hwdebug.hpp"
@@ -69,7 +69,9 @@ class SvmUnmapMemoryCommand;
 class TransferBufferFileCommand;
 class HwDebugManager;
 class Device;
+#ifndef USE_COMGR_LIBRARY
 class CacheCompilation;
+#endif
 struct KernelParameterDescriptor;
 struct Coord3D;
 
@@ -459,6 +461,8 @@ struct Info : public amd::EmbeddedObject {
   cl_uint numRTCUs_;
   //! Thread trace enable
   cl_bool threadTraceEnable_;
+  //! ECC protected GPRs support (only available Vega20+)
+  cl_bool sramEccEnabled_;
 
   //! Image pitch alignment for image2d_from_buffer
   cl_uint imagePitchAlignment_;
@@ -729,6 +733,9 @@ class Memory : public amd::HeapObject {
 
   virtual uint64_t virtualAddress() const { return 0; }
 
+  //! Returns CPU pointer to HW state
+  virtual const address cpuSrd() const { return nullptr; }
+
   virtual void IpcCreate(size_t offset, size_t* mem_size, void* handle) const {
     ShouldNotReachHere();
   }
@@ -775,7 +782,7 @@ class Memory : public amd::HeapObject {
 class Sampler : public amd::HeapObject {
  public:
   //! Constructor
-  Sampler() : hwSrd_(0) {}
+  Sampler() : hwSrd_(0), hwState_(nullptr) {}
 
   //! Default destructor for the device memory object
   virtual ~Sampler(){};
@@ -783,8 +790,12 @@ class Sampler : public amd::HeapObject {
   //! Returns device specific HW state for the sampler
   uint64_t hwSrd() const { return hwSrd_; }
 
+  //! Returns CPU pointer to HW state
+  const address hwState() const { return hwState_; }
+
  protected:
   uint64_t hwSrd_;  //!< Device specific HW state for the sampler
+  address hwState_;   //!< CPU pointer to HW state
 
  private:
   //! Disable default copy constructor
@@ -1316,7 +1327,7 @@ class Device : public RuntimeObject {
   // P2P devices that are accessible from the current device
   std::vector<cl_device_id> p2pDevices_;
 
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
   amd::CacheCompilation* cacheCompilation() const { return cacheCompilation_.get(); }
 #endif
 
@@ -1342,7 +1353,7 @@ class Device : public RuntimeObject {
   BlitProgram* blitProgram_;      //!< Blit program info
   static AppProfile appProfile_;  //!< application profile
   HwDebugManager* hwDebugMgr_;    //!< Hardware Debug manager
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
                                   //! Compilation with cache support
   std::unique_ptr<amd::CacheCompilation> cacheCompilation_;
 #endif
@@ -1360,7 +1371,7 @@ class Device : public RuntimeObject {
   std::map<uintptr_t, device::Memory*>* vaCacheMap_;  //!< VA cache map
 };
 
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 //! Compilation process with cache support.
 class CacheCompilation : public amd::HeapObject {
  public:
