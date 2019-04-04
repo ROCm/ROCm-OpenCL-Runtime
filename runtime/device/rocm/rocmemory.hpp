@@ -174,8 +174,10 @@ class Image : public roc::Memory {
   size_t getDeviceDataSize() { return deviceImageInfo_.size; }
   size_t getDeviceDataAlignment() { return deviceImageInfo_.alignment; }
 
-  hsa_ext_image_t getHsaImageObject() { return hsaImageObject_; }
+  hsa_ext_image_t getHsaImageObject() const { return hsaImageObject_; }
   const hsa_ext_image_descriptor_t& getHsaImageDescriptor() const { return imageDescriptor_; }
+
+  virtual const address cpuSrd() const { return reinterpret_cast<const address>(getHsaImageObject().handle); }
 
  private:
   //! Disable copy constructor

@@ -19,14 +19,15 @@
 #include "device/rocm/rocblit.hpp"
 #include "device/rocm/rocvirtual.hpp"
 #include "device/rocm/rocprogram.hpp"
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 #include "driver/AmdCompiler.h"
-#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#endif  // defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 #include "device/rocm/rocmemory.hpp"
 #include "device/rocm/rocglinterop.hpp"
 #ifdef WITH_AMDGPU_PRO
 #include "pro/prodriver.hpp"
 #endif
+#include "platform/sampler.hpp"
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -407,7 +408,7 @@ bool Device::init() {
   std::unordered_map<int, bool> selectedDevices;
   bool useDeviceList = false;
 
-  std::string ordinals = IS_HIP ? ((HIP_VISIBLE_DEVICES[0] != '\0') ?
+  std::string ordinals = amd::IS_HIP ? ((HIP_VISIBLE_DEVICES[0] != '\0') ?
                          HIP_VISIBLE_DEVICES : CUDA_VISIBLE_DEVICES)
                          : GPU_DEVICE_ORDINAL;
   if (ordinals[0] != '\0') {
@@ -535,7 +536,10 @@ bool Device::init() {
 
     roc_device->deviceInfo_.gfxipVersion_ = gfxipVersionNum;
 
-    if (!roc_device->create()) {
+    // TODO: set sramEccEnabled flag based on target string suffix
+    //       when ROCr resumes reporting sram-ecc support
+    bool sramEccEnabled = (gfxipVersionNum == 906) ? true : false;
+    if (!roc_device->create(sramEccEnabled)) {
       LogError("Error creating new instance of Device.");
       continue;
     }
@@ -585,7 +589,7 @@ void Device::tearDown() {
   hsa_shut_down();
 }
 
-bool Device::create() {
+bool Device::create(bool sramEccEnabled) {
   if (HSA_STATUS_SUCCESS !=
       hsa_agent_get_info(_bkendDevice, HSA_AGENT_INFO_PROFILE, &agent_profile_)) {
     return false;
@@ -618,6 +622,7 @@ bool Device::create() {
   info_.deviceTopology_.pcie.bus = (hsa_bdf_id & (0xFF << 8)) >> 8;
   info_.deviceTopology_.pcie.device = (hsa_bdf_id & (0x1F << 3)) >> 3;
   info_.deviceTopology_.pcie.function = (hsa_bdf_id & 0x07);
+  info_.sramEccEnabled_ = sramEccEnabled;
 
 #ifdef WITH_AMDGPU_PRO
   // Create amdgpu-pro device interface for SSG support
@@ -643,6 +648,7 @@ bool Device::create() {
   if (settings().useLightning_) {
     scheduler = sch.c_str();
   }
+#ifndef USE_COMGR_LIBRARY
   //  create compilation object with cache support
   int gfxipMajor = deviceInfo_.gfxipVersion_ / 100;
   int gfxipMinor = deviceInfo_.gfxipVersion_ / 10 % 10;
@@ -653,7 +659,10 @@ bool Device::create() {
   std::ostringstream cacheTarget;
   cacheTarget << "AMD-AMDGPU-" << gfxipMajor << "-" << gfxipMinor << "-" << gfxipStepping;
   if (settings().enableXNACK_) {
-    cacheTarget << "-xnack";
+    cacheTarget << "+xnack";
+  }
+  if (info_.sramEccEnabled_) {
+    cacheTarget << "+sram-ecc";
   }
 
   amd::CacheCompilation* compObj = new amd::CacheCompilation(
@@ -664,6 +673,7 @@ bool Device::create() {
   }
 
   cacheCompilation_.reset(compObj);
+#endif  // USE_COMGR_LIBRARY
 #endif
 
   amd::Context::Info info = {0};
@@ -835,6 +845,66 @@ hsa_status_t Device::iterateCpuMemoryPoolCallback(hsa_amd_memory_pool_t pool, vo
   return HSA_STATUS_SUCCESS;
 }
 
+bool Device::createSampler(const amd::Sampler& owner, device::Sampler** sampler) const {
+  *sampler = nullptr;
+  Sampler* gpuSampler = new Sampler(*this);
+  if ((nullptr == gpuSampler) || !gpuSampler->create(owner)) {
+    delete gpuSampler;
+    return false;
+  }
+  *sampler = gpuSampler;
+  return true;
+}
+
+void Sampler::fillSampleDescriptor(hsa_ext_sampler_descriptor_t& samplerDescriptor,
+                                   const amd::Sampler& sampler) const {
+  samplerDescriptor.filter_mode = sampler.filterMode() == CL_FILTER_NEAREST
+      ? HSA_EXT_SAMPLER_FILTER_MODE_NEAREST
+      : HSA_EXT_SAMPLER_FILTER_MODE_LINEAR;
+  samplerDescriptor.coordinate_mode = sampler.normalizedCoords()
+      ? HSA_EXT_SAMPLER_COORDINATE_MODE_NORMALIZED
+      : HSA_EXT_SAMPLER_COORDINATE_MODE_UNNORMALIZED;
+  switch (sampler.addressingMode()) {
+    case CL_ADDRESS_CLAMP_TO_EDGE:
+      samplerDescriptor.address_mode = HSA_EXT_SAMPLER_ADDRESSING_MODE_CLAMP_TO_EDGE;
+      break;
+    case CL_ADDRESS_REPEAT:
+      samplerDescriptor.address_mode = HSA_EXT_SAMPLER_ADDRESSING_MODE_REPEAT;
+      break;
+    case CL_ADDRESS_CLAMP:
+      samplerDescriptor.address_mode = HSA_EXT_SAMPLER_ADDRESSING_MODE_CLAMP_TO_BORDER;
+      break;
+    case CL_ADDRESS_MIRRORED_REPEAT:
+      samplerDescriptor.address_mode = HSA_EXT_SAMPLER_ADDRESSING_MODE_MIRRORED_REPEAT;
+      break;
+    case CL_ADDRESS_NONE:
+      samplerDescriptor.address_mode = HSA_EXT_SAMPLER_ADDRESSING_MODE_UNDEFINED;
+      break;
+    default:
+      return;
+  }
+}
+
+bool Sampler::create(const amd::Sampler& owner) {
+  hsa_ext_sampler_descriptor_t samplerDescriptor;
+  fillSampleDescriptor(samplerDescriptor, owner);
+
+  hsa_status_t status = hsa_ext_sampler_create(dev_.getBackendDevice(), &samplerDescriptor, &hsa_sampler);
+
+  if (HSA_STATUS_SUCCESS != status) {
+    return false;
+  }
+
+  hwSrd_ = reinterpret_cast<uint64_t>(hsa_sampler.handle);
+  hwState_ = reinterpret_cast<address>(hsa_sampler.handle);
+
+  return true;
+}
+
+Sampler::~Sampler() {
+  hsa_ext_sampler_destroy(dev_.getBackendDevice(), hsa_sampler);
+}
+
 bool Device::populateOCLDeviceConstants() {
   info_.available_ = true;
 
@@ -847,9 +917,11 @@ bool Device::populateOCLDeviceConstants() {
   std::ostringstream oss;
   oss << "gfx" << gfxipMajor << gfxipMinor << gfxipStepping;
   if (settings().useLightning_ && hsa_settings->enableXNACK_) {
-    oss << "-xnack";
+    oss << "+xnack";
   }
-
+  if (info_.sramEccEnabled_) {
+    oss << "+sram-ecc";
+  }
   ::strcpy(info_.name_, oss.str().c_str());
 
   char device_name[64] = {0};
@@ -1070,11 +1142,9 @@ bool Device::populateOCLDeviceConstants() {
 
   strcpy(info_.driverVersion_, ss.str().c_str());
 
-  // Allow testing OpenCL 2.1 features with the OPENCL_VERSION variable. We don't accept OPENCL_VERSION
-  // values other than 210, since the default value of OPENCL_VERSION is 200. Accepting 200 would report
-  // 'OpenCL 2.0' by default.
-  if (OPENCL_VERSION == 210) {
-    info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"2.1" " ";
+  // Enable OpenCL 2.0 for Vega10+
+  if (deviceInfo_.gfxipVersion_ >= 900) {
+    info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"2.0" " ";
   } else {
     info_.version_ = "OpenCL " /*OPENCL_VERSION_STR*/"1.2" " ";
   }

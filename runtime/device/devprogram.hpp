@@ -11,7 +11,9 @@
 #include "comgrctx.hpp"
 
 #if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#ifndef USE_COMGR_LIBRARY
 #include "driver/AmdCompiler.h"
+#endif
 //#include "llvm/Support/AMDGPUMetadata.h"
 
 namespace llvm {
@@ -88,6 +90,7 @@ class Program : public amd::HeapObject {
        uint32_t isLC_ : 1;            //!< LC was used for the program compilation
        uint32_t hasGlobalStores_ : 1; //!< Program has writable program scope variables
        uint32_t xnackEnabled_ : 1;    //!< Xnack was enabled during compilation
+       uint32_t sramEccEnabled_ : 1;  //!< SRAM ECC was enabled during compilation
      };
      uint32_t flags_;  //!< Program flags
    };
@@ -103,7 +106,7 @@ class Program : public amd::HeapObject {
   aclBinary* binaryElf_;            //!< Binary for the new compiler library
 
   std::string lastBuildOptionsArg_;
-  std::string buildLog_;            //!< build log.
+  mutable std::string buildLog_;    //!< build log.
   cl_int buildStatus_;              //!< build status.
   cl_int buildError_;               //!< build error
 
@@ -218,6 +221,14 @@ class Program : public amd::HeapObject {
   //! Check if xnack is enable
   const bool xnackEnable() const { return (xnackEnabled_ == 1); }
 
+  //! Check if SRAM ECC is enable
+  const bool sramEccEnable() const { return (sramEccEnabled_ == 1); }
+
+  virtual bool findGlobalSymbols(void** dptr, size_t* bytes, const char* globalName) const {
+    ShouldNotReachHere();
+    return false;
+  }
+
  protected:
   //! pre-compile setup
   bool initBuild(amd::option::Options* options);
@@ -272,7 +283,7 @@ class Program : public amd::HeapObject {
 
   void setType(type_t newType) { type_ = newType; }
 
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#if defined(WITH_LIGHTNING_COMPILER) && !defined(USE_COMGR_LIBRARY)
   //! Return a new transient compiler instance.
   static std::unique_ptr<amd::opencl_driver::Compiler> newCompilerInstance();
 #endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
@@ -320,8 +331,10 @@ class Program : public amd::HeapObject {
   bool linkImplHSAIL(amd::option::Options* options);
 
 #if defined(USE_COMGR_LIBRARY)
+  //! Dump the log data object to the build log, if both are present
+  void extractBuildLog(const char* buildLog, amd_comgr_data_set_t dataSet);
   //! Dump the code object data
-  void extractByteCodeBinary(const amd_comgr_data_set_t inDataSet,
+  amd_comgr_status_t extractByteCodeBinary(const amd_comgr_data_set_t inDataSet,
     const amd_comgr_data_kind_t dataKind, const std::string& outFileName,
     char* outBinary[] = nullptr, size_t* outSize = nullptr);
 

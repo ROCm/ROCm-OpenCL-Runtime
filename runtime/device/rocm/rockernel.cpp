@@ -10,7 +10,9 @@
 #ifndef WITHOUT_HSA_BACKEND
 
 #if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+#ifndef USE_COMGR_LIBRARY
 #include "driver/AmdCompiler.h"
+#endif
 #include "llvm/Support/AMDGPUMetadata.h"
 
 typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
@@ -56,6 +58,9 @@ bool LightningKernel::init() {
   std::string targetIdent = std::string("amdgcn-amd-amdhsa--")+program_->machineTarget();
   if (program_->xnackEnable()) {
     targetIdent.append("+xnack");
+  }
+  if (program_->sramEccEnable()) {
+    targetIdent.append("+sram-ecc");
   }
 
   if (!SetAvailableSgprVgpr(targetIdent)) {
