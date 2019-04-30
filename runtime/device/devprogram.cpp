@@ -1466,9 +1466,6 @@ bool Program::linkImplLC(amd::option::Options* options) {
     if (options->oVariables->UnsafeMathOpt || options->oVariables->FastRelaxedMath) {
         linkOptions += "unsafe_math,";
     }
-    if (device().settings().lcWavefrontSize64_) {
-        linkOptions += "wavefrontsize64,";
-    }
     if (!linkOptions.empty()) {
         linkOptions.pop_back();     // remove the last comma
     }
