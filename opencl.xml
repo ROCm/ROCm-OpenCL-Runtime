@@ -7,8 +7,8 @@
 
   <project path="opencl" name="ROCm-OpenCL-Runtime"/>
   <project path="opencl/compiler/driver" name="ROCm-OpenCL-Driver"/>
-  <project path="opencl/compiler/llvm" name="llvm" revision="refs/tags/roc-ocl-2.4.0"/>
-  <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="refs/tags/roc-ocl-2.4.0"/>
+  <project path="opencl/compiler/llvm" name="llvm" revision="refs/tags/roc-2.4.0"/>
+  <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="refs/tags/roc-2.4.0"/>
   <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="refs/tags/roc-ocl-2.4.0"/>
   <project path="opencl/library/amdgcn" name="ROCm-Device-Libs"/>
 
