@@ -552,6 +552,23 @@ bool CopyMemoryP2PCommand::validateMemory() {
     LogPrintfError("Can't allocate memory size - 0x%08X bytes!", memory2_->getSize());
     return false;
   }
+  bool p2pStaging = false;
+  // Validate P2P memories on the current device, if any of them is null, then it's p2p staging
+  if ((nullptr == memory1_->getDeviceMemory(queue()->device())) ||
+      (nullptr == memory2_->getDeviceMemory(queue()->device()))) {
+    p2pStaging = true;
+  }
+
+  if (devices[0]->P2PStage() != nullptr && p2pStaging) {
+    amd::ScopedLock lock(devices[0]->P2PStageOps());
+    // Make sure runtime allocates memory on every device
+    for (uint d = 0; d < devices[0]->GlbCtx().devices().size(); ++d) {
+      device::Memory* mem = devices[0]->P2PStage()->getDeviceMemory(*devices[0]->GlbCtx().devices()[d]);
+      if (nullptr == mem) {
+        return false;
+      }
+    }
+  }
   return true;
 }
 

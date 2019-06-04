@@ -49,8 +49,6 @@ amd::Device::Compiler* NullDevice::compilerHandle_;
 bool roc::Device::isHsaInitialized_ = false;
 hsa_agent_t roc::Device::cpu_agent_ = {0};
 std::vector<hsa_agent_t> roc::Device::gpu_agents_;
-amd::Monitor* roc::Device::p2p_stage_ops_ = nullptr;
-std::vector<Memory*> roc::Device::p2p_stages_;
 const bool roc::Device::offlineDevice_ = false;
 const bool roc::NullDevice::offlineDevice_ = true;
 
@@ -165,13 +163,14 @@ Device::~Device() {
   delete mapCache_;
   delete mapCacheOps_;
 
-  delete p2p_stage_ops_;
-  p2p_stage_ops_ = nullptr;
-
-  for (auto buf: p2p_stages_) {
-    delete buf;
+  if (nullptr != p2p_stage_) {
+    p2p_stage_->release();
+    p2p_stage_ = nullptr;
   }
-  p2p_stages_.clear();
+  if (glb_ctx_ != nullptr) {
+      glb_ctx_->release();
+      glb_ctx_ = nullptr;
+  }
 
   // Destroy temporary buffers for read/write
   delete xferRead_;
@@ -538,7 +537,7 @@ bool Device::init() {
 
     // TODO: set sramEccEnabled flag based on target string suffix
     //       when ROCr resumes reporting sram-ecc support
-    bool sramEccEnabled = (gfxipVersionNum == 906) ? true : false;
+    bool sramEccEnabled = (gfxipVersionNum == 906 || gfxipVersionNum == 908) ? true : false;
     if (!roc_device->create(sramEccEnabled)) {
       LogError("Error creating new instance of Device.");
       continue;
@@ -555,11 +554,8 @@ bool Device::init() {
       }
     }
 
-    if (!useDeviceList && (flagIsDefault(GPU_DEVICE_NAME) || GPU_DEVICE_NAME == 0
-        || GPU_DEVICE_NAME[0] == '\0' || !strcmp(GPU_DEVICE_NAME, roc_device->info_.name_))) {
-        roc_device.release()->registerDevice();
-    } else if (useDeviceList && selectedDevices[ordinal++]) {
-        roc_device.release()->registerDevice();
+    if (!useDeviceList || selectedDevices[ordinal++]) {
+      roc_device.release()->registerDevice();
     }
   }
 
@@ -707,16 +703,32 @@ bool Device::create(bool sramEccEnabled) {
   // Use just 1 entry by default for the map cache
   mapCache_->push_back(nullptr);
 
-  if (p2p_stage_ops_ == nullptr) {
-    p2p_stage_ops_ = new amd::Monitor("P2P Staging Lock", true);
-    if (nullptr == p2p_stage_ops_) {
-      return false;
+  if ((p2p_agents_.size() == 0) &&
+      (glb_ctx_ == nullptr) && (gpu_agents_.size() > 1) &&
+      // Allow creation for the last device in the list.
+      (gpu_agents_[gpu_agents_.size() - 1].handle == _bkendDevice.handle)) {
+
+    std::vector<amd::Device*> devices;
+    uint32_t numDevices = amd::Device::numDevices(CL_DEVICE_TYPE_GPU, false);
+    // Add all PAL devices
+    for (uint32_t i = 0; i < numDevices; ++i) {
+        devices.push_back(amd::Device::devices()[i]);
     }
-    for (uint i = 0; i < 2; i++) {
-      Memory* buf = new Buffer(*this, kP2PStagingSize);
+    // Add current
+    devices.push_back(this);
+
+    if (devices.size() > 1) {
+      // Create a dummy context
+      glb_ctx_ = new amd::Context(devices, info);
+      if (glb_ctx_ == nullptr) {
+        return false;
+      }
+      amd::Buffer* buf =
+        new (GlbCtx()) amd::Buffer(GlbCtx(), CL_MEM_ALLOC_HOST_PTR, kP2PStagingSize);
       if ((buf != nullptr) && buf->create()) {
-        p2p_stages_.push_back(buf);
-      } else {
+        p2p_stage_ = buf;
+      }
+      else {
         delete buf;
         return false;
       }
@@ -995,7 +1007,7 @@ bool Device::populateOCLDeviceConstants() {
   for (auto agent: gpu_agents_) {
     if (agent.handle != _bkendDevice.handle) {
       hsa_status_t err;
-      // Can current GPU have access to another GPU memory pool
+      // Can another GPU (agent) have access to the current GPU memory pool (gpuvm_segment_)?
       hsa_amd_memory_pool_access_t access;
       err = hsa_amd_agent_memory_pool_get_info(agent, gpuvm_segment_, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &access);
       if (err != HSA_STATUS_SUCCESS) {
@@ -1005,6 +1017,7 @@ bool Device::populateOCLDeviceConstants() {
       // Find accessible p2p agents - i.e != HSA_AMD_MEMORY_POOL_ACCESS_NEVER_ALLOWED
       if (HSA_AMD_MEMORY_POOL_ACCESS_ALLOWED_BY_DEFAULT == access ||
           HSA_AMD_MEMORY_POOL_ACCESS_DISALLOWED_BY_DEFAULT == access) {
+        // Agent can have access to the current gpuvm_segment_
         p2p_agents_.push_back(agent);
       }
     }

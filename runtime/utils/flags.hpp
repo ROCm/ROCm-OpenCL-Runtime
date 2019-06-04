@@ -38,8 +38,6 @@ debug(size_t, PARAMETERS_MIN_ALIGNMENT, 16,                                   \
         "Minimum alignment required for the abstract parameters stack")       \
 debug(size_t, MEMOBJ_BASE_ADDR_ALIGN, 4*Ki,                                   \
         "Alignment of the base address of any allocate memory object")        \
-release(cstring, GPU_DEVICE_NAME, "",                                         \
-        "Select the device ordinal (will only report a single device)")       \
 release(cstring, GPU_DEVICE_ORDINAL, "",                                      \
         "Select the device ordinal (comma seperated list of available devices)") \
 release(bool, REMOTE_ALLOC, false,                                            \
@@ -131,7 +129,7 @@ release(bool, DISABLE_DEFERRED_ALLOC, false,                                  \
         "Disables deferred memory allocation on device")                      \
 release(int, AMD_GPU_FORCE_SINGLE_FP_DENORM, -1,                              \
         "Force denorm for single precision: -1 - don't force, 0 - disable, 1 - enable") \
-release(uint, OCL_SET_SVM_SIZE, 16384,                                      \
+release(uint, OCL_SET_SVM_SIZE, 4*16384,                                      \
         "set SVM space size for discrete GPU")                                \
 debug(uint, OCL_SYSMEM_REQUIREMENT, 2,                                        \
         "Use flag to change the minimum requirement of system memory not to downgrade")        \
@@ -171,11 +169,13 @@ release(uint, PAL_RGP_DISP_COUNT, 50,                                         \
         "The number of dispatches for RGP capture with SQTT")                 \
 release(bool, GPU_ENABLE_LC, IS_LIGHTNING,                                    \
         "Enables LC path")                                                    \
+release(bool, GPU_ENABLE_HW_P2P, false,                                       \
+        "Enables HW P2P path")                                                \
 release(uint, GPU_MAX_COMMAND_BUFFERS, 8,                                     \
          "The maximum number of command buffers allocated per queue")         \
-release(cstring, HIP_VISIBLE_DEVICES, "",                                             \
-        "Only devices whose index is present in the sequence are visible to HIP")    \
-release(cstring, CUDA_VISIBLE_DEVICES, "",                                            \
+release(cstring, HIP_VISIBLE_DEVICES, "",                                     \
+        "Only devices whose index is present in the sequence are visible to HIP")  \
+release(cstring, CUDA_VISIBLE_DEVICES, "",                                    \
         "Only devices whose index is present in the sequence are visible to HIP")    \
 
 namespace amd {
