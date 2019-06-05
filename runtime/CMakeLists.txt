@@ -29,12 +29,6 @@ include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/libelf)
 
 add_subdirectory(device/rocm)
 
-if(${USE_COMGR_LIBRARY} MATCHES "yes")
-  find_package(amd_comgr REQUIRED CONFIG)
-  include_directories("$<TARGET_PROPERTY:amd_comgr,INTERFACE_INCLUDE_DIRECTORIES>")
-  set(COMGR_CPP device/comgrctx.cpp)
-endif()
-
 add_library(oclruntime OBJECT
   thread/thread.cpp
   thread/monitor.cpp
@@ -67,7 +61,6 @@ add_library(oclruntime OBJECT
   ${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/elf.cpp
   ${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/elf_utils.cpp
   ${CMAKE_SOURCE_DIR}/compiler/tools/caching/cache.cpp
-  ${COMGR_CPP}
 )
 set_target_properties(oclruntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
