@@ -7,7 +7,7 @@ if(CMAKE_BUILD_TYPE MATCHES "^Debug$")
   add_definitions(-DDEBUG)
 endif()
 
-include_directories(${ROCR_INCLUDE_DIRS})
+include_directories(${ROCR_INCLUDES})
 
 include_directories(${CMAKE_SOURCE_DIR}/runtime)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl)
