@@ -73,6 +73,7 @@ add_subdirectory(library/amdgcn EXCLUDE_FROM_ALL)
 
 add_subdirectory(compiler/lib/loaders/elf/utils/libelf)
 
+find_package(ROCT REQUIRED)
 find_package(ROCR REQUIRED)
 add_subdirectory(runtime)
 
