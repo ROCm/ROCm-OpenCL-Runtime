@@ -68,6 +68,8 @@ Settings::Settings() {
   numWaitEvents_ = 8;
 
   useLightning_ = GPU_ENABLE_LC;
+
+  lcWavefrontSize64_ = true;
 }
 
 bool Settings::create(bool fullProfile, int gfxipVersion) {
@@ -116,6 +118,10 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
     if (gfxipVersion >= 900) {
       singleFpDenorm_ = true;
     }
+    if (gfxipVersion >= 1000) {
+      lcWavefrontSize64_ = false;
+    }
+
   } else {
     // Also enable AMD double precision extension?
     enableExtension(ClAmdFp64);

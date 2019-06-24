@@ -529,7 +529,8 @@ class Settings : public amd::HeapObject {
       uint hsailExplicitXnack_ : 1;   //!< Xnack in hsail path for this deivce
       uint useLightning_ : 1;         //!< Enable LC path for this device
       uint enableXNACK_ : 1;          //!< Enable XNACK feature
-      uint reserved_ : 17;
+      uint lcWavefrontSize64_ : 1;    //!< Enable Wave64 mode for this device
+      uint reserved_ : 16;
     };
     uint value_;
   };
