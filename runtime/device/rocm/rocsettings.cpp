@@ -117,6 +117,8 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
     // enable subnormals for gfx900 and later
     if (gfxipVersion >= 900) {
       singleFpDenorm_ = true;
+      enableCoopGroups_ = true;
+      enableCoopMultiDeviceGroups_ = true;
     }
     if (gfxipVersion >= 1000) {
       lcWavefrontSize64_ = false;
@@ -180,8 +182,11 @@ void Settings::override() {
         break;
     }
   }
+  if (!flagIsDefault(GPU_ENABLE_COOP_GROUPS)) {
+    enableCoopGroups_ = GPU_ENABLE_COOP_GROUPS;
+    enableCoopMultiDeviceGroups_ = GPU_ENABLE_COOP_GROUPS;
+  }
 }
-
 }  // namespace roc
 
 #endif  // WITHOUT_GPU_BACKEND

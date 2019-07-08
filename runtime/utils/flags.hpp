@@ -171,16 +171,25 @@ release(bool, GPU_ENABLE_LC, IS_LIGHTNING,                                    \
         "Enables LC path")                                                    \
 release(bool, GPU_ENABLE_HW_P2P, false,                                       \
         "Enables HW P2P path")                                                \
+release(bool, GPU_ENABLE_COOP_GROUPS, false,                                  \
+         "Enables cooperative group launch")                                  \
 release(uint, GPU_MAX_COMMAND_BUFFERS, 8,                                     \
          "The maximum number of command buffers allocated per queue")         \
 release(cstring, HIP_VISIBLE_DEVICES, "",                                     \
         "Only devices whose index is present in the sequence are visible to HIP")  \
 release(cstring, CUDA_VISIBLE_DEVICES, "",                                    \
         "Only devices whose index is present in the sequence are visible to HIP")    \
+release(bool, OCL_DUMP_CODE_OBJECT, false,                                    \
+        "Enable dump code object")                                    \
+release(uint, GPU_MAX_USWC_ALLOC_SIZE, 2048,                                  \
+        "Set a limit in Mb on the maximum USWC allocation size"               \
+        "-1 = No limit")
 
 namespace amd {
 
 extern bool IS_HIP;
+
+extern bool IS_LEGACY;
 
 //! \addtogroup Utils
 //  @{

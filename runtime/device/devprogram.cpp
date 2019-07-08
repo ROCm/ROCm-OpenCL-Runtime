@@ -10,6 +10,7 @@
 #include "utils/options.hpp"
 #include "utils/bif_section_labels.hpp"
 #include "utils/libUtils.h"
+#include "comgrctx.hpp"
 
 #if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 #ifndef USE_COMGR_LIBRARY
@@ -41,6 +42,12 @@
 
 typedef llvm::AMDGPU::HSAMD::Kernel::Arg::Metadata KernelArgMD;
 #endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
+
+#ifdef EARLY_INLINE
+#define AMDGPU_EARLY_INLINE_ALL_OPTION " -mllvm -amdgpu-early-inline-all"
+#else
+#define AMDGPU_EARLY_INLINE_ALL_OPTION
+#endif
 
 namespace device {
 
@@ -200,8 +207,11 @@ void Program::extractBuildLog(const char* buildLog, amd_comgr_data_set_t dataSet
     status = amd::Comgr::action_data_count(dataSet, AMD_COMGR_DATA_KIND_LOG, &count);
 
     if (status == AMD_COMGR_STATUS_SUCCESS && count > 0) {
-      const std::string logName(buildLog);
-      status = extractByteCodeBinary(dataSet, AMD_COMGR_DATA_KIND_LOG, logName);
+      char* logData = nullptr;
+      size_t logSize;
+      status = extractByteCodeBinary(dataSet, AMD_COMGR_DATA_KIND_LOG, "", &logData, &logSize);
+      buildLog_ += logData;
+      free(logData);
     }
   }
   if (status != AMD_COMGR_STATUS_SUCCESS) {
@@ -254,36 +264,13 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
   }
 
   // save the binary to the file as output file name is specified
-  // For log dataset, outputs are directed to stdout and stderr if
-  // the file name is "stdout" and "stderr", respectively.
   if (!outFileName.empty()) {
-    std::ios_base::openmode mode = std::ios::trunc | std::ios::binary;
-
-    bool done = false;
-    // handle the log outputs
-    if (dataKind == AMD_COMGR_DATA_KIND_LOG) {
-      if (binarySize == 0) {  // nothing to output
-        done = true;
-      } else if (outFileName.compare("stdout") == 0) {
-        std::cout << binary << std::endl;
-        done = true;
-      } else if (outFileName.compare("stderr") == 0) {
-        std::cerr << binary << std::endl;
-        done = true;
-      } else {
-        mode = std::ios::app;   // use append mode for the log outputs
-      }
-    }
-
-    // output to file
-    if (!done) {
-      std::ofstream f(outFileName.c_str(), mode);
-      if (f.is_open()) {
-        f.write(binary, binarySize);
-        f.close();
-      } else {
-        buildLog_ += "Warning: opening the file to dump the code failed.\n";
-      }
+    std::ofstream f(outFileName.c_str(), std::ios::trunc);
+    if (f.is_open()) {
+      f.write(binary, binarySize);
+      f.close();
+    } else {
+      buildLog_ += "Warning: opening the file to dump the code failed.\n";
     }
   }
 
@@ -707,7 +694,7 @@ bool Program::compileImplLC(const std::string& sourceCode,
   driverOptions.append(ProcessOptions(options));
 
   // Set whole program mode
-  driverOptions.append(" -mllvm -amdgpu-early-inline-all -mllvm -amdgpu-prelink");
+  driverOptions.append(AMDGPU_EARLY_INLINE_ALL_OPTION " -mllvm -amdgpu-prelink");
 
   if (device().settings().lcWavefrontSize64_) {
      driverOptions.append(" -mwavefrontsize64");
@@ -846,7 +833,7 @@ bool Program::compileImplLC(const std::string& sourceCode,
   driverOptions.append(ProcessOptions(options));
 
   // Set whole program mode
-  driverOptions.append(" -mllvm -amdgpu-early-inline-all -mllvm -amdgpu-prelink");
+  driverOptions.append(AMDGPU_EARLY_INLINE_ALL_OPTION " -mllvm -amdgpu-prelink");
 
   // Find the temp folder for the OS
   std::string tempFolder = amd::Os::getTempPath();
@@ -1399,6 +1386,17 @@ bool Program::linkImpl(amd::option::Options* options) {
   }
 }
 
+static void dumpCodeObject(const std::string& image) {
+    char fname[30];
+    static std::atomic<int> index;
+    sprintf(fname, "_code_object%04d.o", index++);
+    LogPrintfInfo("Code object saved in %s\n", fname);
+    std::ofstream ofs;
+    ofs.open(fname, std::ios::binary);
+    ofs << image;
+    ofs.close();
+}
+
 // ================================================================================================
 #if defined(USE_COMGR_LIBRARY)
 bool Program::linkImplLC(amd::option::Options* options) {
@@ -1441,6 +1439,9 @@ bool Program::linkImplLC(amd::option::Options* options) {
     case ACL_TYPE_ISA: {
       amd::Comgr::destroy_data_set(inputs);
       binary_t isaBinary = binary();
+      if (OCL_DUMP_CODE_OBJECT) {
+        dumpCodeObject(std::string{(const char*)isaBinary.first, isaBinary.second});
+      }
       return setKernels(options, const_cast<void *>(isaBinary.first), isaBinary.second);
       break;
     }
@@ -1524,7 +1525,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
   }
 
   // Set whole program mode
-  codegenOptions.append(" -mllvm -amdgpu-internalize-symbols -mllvm -amdgpu-early-inline-all");
+  codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
 
   if (device().settings().lcWavefrontSize64_) {
      codegenOptions.append(" -mwavefrontsize64");
@@ -1751,7 +1752,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
   // Force object code v2.
   codegenOptions.append(" -mno-code-object-v3");
   // Set whole program mode
-  codegenOptions.append(" -mllvm -amdgpu-internalize-symbols -mllvm -amdgpu-early-inline-all");
+  codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
 
   if (device().settings().lcWavefrontSize64_) {
       codegenOptions.append(" -mwavefrontsize64");
