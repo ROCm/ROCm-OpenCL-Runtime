@@ -3,7 +3,7 @@
   <remote name="RadeonOpenCompute" fetch="https://github.com/RadeonOpenCompute/"/>
   <remote name="KhronosGroup" fetch="https://github.com/KhronosGroup/"/>
 
-  <default remote="RadeonOpenCompute" revision="master" sync-c="true" sync-j="4"/>
+  <default remote="RadeonOpenCompute" revision="refs/tags/roc-2.6.0" sync-c="true" sync-j="4"/>
 
   <project path="opencl" name="ROCm-OpenCL-Runtime"/>
   <project path="opencl/compiler/driver" name="ROCm-OpenCL-Driver"/>
