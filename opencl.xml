@@ -7,10 +7,10 @@
 
   <project path="opencl" name="ROCm-OpenCL-Runtime"/>
   <project path="opencl/compiler/driver" name="ROCm-OpenCL-Driver"/>
-  <project path="opencl/compiler/llvm" name="llvm" revision="amd-common"/>
-  <project path="opencl/compiler/llvm/tools/clang" name="clang" revision="amd-common"/>
-  <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="amd-common"/>
+  <project path="opencl/compiler/llvm" name="llvm" revision="refs/tags/roc-ocl-2.6.0"/>
+  <project path="opencl/compiler/llvm/tools/clang" name="clang"/>
+  <project path="opencl/compiler/llvm/tools/lld" name="lld" revision="refs/tags/roc-ocl-2.6.0"/>
   <project path="opencl/library/amdgcn" name="ROCm-Device-Libs"/>
 
-  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" remote="KhronosGroup"/>
+  <project path="opencl/api/opencl/khronos/icd" name="OpenCL-ICD-Loader" remote="KhronosGroup" revision="7433f2acbf5bbc400f26494ff1dc895da6265bef"/>
 </manifest>
