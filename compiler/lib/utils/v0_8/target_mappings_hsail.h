@@ -54,7 +54,6 @@ static const TargetMapping HSAILTargetMapping_0_8[] = {
   { "AI", "gfx905",    "GFX9",  amd::GPU_Library_HSAIL, AI_VEGA12_P_A0,     F_AI_BASE, true, true,  FAMILY_AI, true },
   { "AI", "gfx906",    "GFX9",  amd::GPU_Library_HSAIL, AI_VEGA20_P_A0,     F_AI_BASE, true, true,  FAMILY_AI, false },
   { "AI", "gfx907",    "GFX9",  amd::GPU_Library_HSAIL, AI_VEGA20_P_A0,     F_AI_BASE, true, true,  FAMILY_AI, true },
-
 #else
   UnknownTarget,
   UnknownTarget,

@@ -21,12 +21,7 @@ include_directories(${CMAKE_SOURCE_DIR}/api/opencl)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers/opencl2.2)
-if(${USE_COMGR_LIBRARY} MATCHES "yes")
-  find_package(amd_comgr REQUIRED CONFIG)
-  include_directories("$<TARGET_PROPERTY:amd_comgr,INTERFACE_INCLUDE_DIRECTORIES>")
-else()
-  include_directories(${CMAKE_SOURCE_DIR}/compiler/driver/src)
-endif()
+include_directories(${CMAKE_SOURCE_DIR}/compiler/driver/src)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/include)
 include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/backends/common)
@@ -71,9 +66,7 @@ add_library(amdocl64 SHARED
   $<TARGET_OBJECTS:oclrocm>
   ${ADDITIONAL_LIBRARIES}
 )
-if(${USE_COMGR_LIBRARY} MATCHES "yes")
-  target_link_libraries(amdocl64 oclelf pthread dl ${ROCT_LIBRARIES} ${ROCR_LIBRARIES})
-else()
-  target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCT_LIBRARIES} ${ROCR_LIBRARIES})
-endif()
+
+target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCR_LIBRARIES})
+
 install(TARGETS amdocl64 LIBRARY DESTINATION lib/x86_64 COMPONENT applications)

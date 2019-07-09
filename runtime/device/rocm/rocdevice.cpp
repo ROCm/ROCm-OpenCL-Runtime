@@ -142,6 +142,7 @@ Device::Device(hsa_agent_t bkendDevice)
     , pro_device_(nullptr)
     , pro_ena_(false)
     , freeMem_(0)
+    , hsa_exclusive_gpu_access_(false)
     , numOfVgpus_(0) {
   group_segment_.handle = 0;
   system_segment_.handle = 0;
@@ -579,6 +580,7 @@ bool Device::init() {
 }
 
 extern const char* SchedulerSourceCode;
+extern const char* GwsInitSourceCode;
 
 void Device::tearDown() {
   NullDevice::tearDown();
@@ -642,6 +644,9 @@ bool Device::create(bool sramEccEnabled) {
 #if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   std::string sch = SchedulerSourceCode;
   if (settings().useLightning_) {
+    if (info().cooperativeGroups_) {
+      sch.append(GwsInitSourceCode);
+    }
     scheduler = sch.c_str();
   }
 #ifndef USE_COMGR_LIBRARY
@@ -773,6 +778,38 @@ device::Program* NullDevice::createProgram(amd::option::Options* options) {
   }
 
   return program;
+}
+
+bool Device::AcquireExclusiveGpuAccess() {
+  // Lock the virtual GPU list
+  vgpusAccess().lock();
+
+  // Find all available virtual GPUs and lock them
+  // from the execution of commands
+  for (uint idx = 0; idx < vgpus().size(); ++idx) {
+    vgpus()[idx]->execution().lock();
+    // Make sure a wait is done
+    vgpus()[idx]->releaseGpuMemoryFence();
+  }
+  if (!hsa_exclusive_gpu_access_) {
+    // @todo call rocr
+    hsa_exclusive_gpu_access_ = true;
+  }
+  return true;
+}
+
+void Device::ReleaseExclusiveGpuAccess(VirtualGPU& vgpu) const {
+  // Make sure the operation is done
+  vgpu.releaseGpuMemoryFence();
+
+  // Find all available virtual GPUs and unlock them
+  // for the execution of commands
+  for (uint idx = 0; idx < vgpus().size(); ++idx) {
+    vgpus()[idx]->execution().unlock();
+  }
+
+  // Unock the virtual GPU list
+  vgpusAccess().unlock();
 }
 
 device::Program* Device::createProgram(amd::option::Options* options) {
@@ -1333,6 +1370,8 @@ bool Device::populateOCLDeviceConstants() {
     //TODO: set to true once thread trace support is available
     info_.threadTraceEnable_ = false;
     info_.pcieDeviceId_ = deviceInfo_.pciDeviceId_;
+    info_.cooperativeGroups_ = settings().enableCoopGroups_;
+    info_.cooperativeMultiDeviceGroups_ = settings().enableCoopMultiDeviceGroups_;
   }
 
   info_.maxPipePacketSize_ = info_.maxMemAllocSize_;
@@ -1350,7 +1389,11 @@ bool Device::populateOCLDeviceConstants() {
 }
 
 device::VirtualDevice* Device::createVirtualDevice(amd::CommandQueue* queue) {
+  amd::ScopedLock lock(vgpusAccess());
+
   bool profiling = (queue != nullptr) && queue->properties().test(CL_QUEUE_PROFILING_ENABLE);
+
+  profiling |= (queue == nullptr) ? true : false;
 
   // Initialization of heap and other resources occur during the command
   // queue creation time.

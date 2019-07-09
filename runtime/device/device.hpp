@@ -507,6 +507,11 @@ struct Info : public amd::EmbeddedObject {
 
   //! Max numbers of threads per CU
   cl_uint maxThreadsPerCU_;
+
+  //! GPU device supports a launch of cooperative groups
+  cl_bool cooperativeGroups_;
+  //! GPU device supports a launch of cooperative groups on multiple devices
+  cl_bool cooperativeMultiDeviceGroups_;
 };
 
 //! Device settings
@@ -528,9 +533,13 @@ class Settings : public amd::HeapObject {
       uint singleFpDenorm_ : 1;       //!< Support Single FP Denorm
       uint hsailExplicitXnack_ : 1;   //!< Xnack in hsail path for this deivce
       uint useLightning_ : 1;         //!< Enable LC path for this device
-      uint enableXNACK_ : 1;          //!< Enable XNACK feature
+      uint enableWgpMode_ : 1;        //!< Enable WGP mode for this device
+      uint enableWave32Mode_ : 1;     //!< Enable Wave32 mode for this device
       uint lcWavefrontSize64_ : 1;    //!< Enable Wave64 mode for this device
-      uint reserved_ : 16;
+      uint enableXNACK_ : 1;          //!< Enable XNACK feature
+      uint enableCoopGroups_ : 1;     //!< Enable cooperative groups feature
+      uint enableCoopMultiDeviceGroups_ : 1; //!< Enable cooperative groups multi device
+      uint reserved_ : 12;
     };
     uint value_;
   };
@@ -1284,7 +1293,9 @@ class Device : public RuntimeObject {
   virtual void svmFree(void* ptr) const = 0;
 
   //! Validate kernel
-  virtual bool validateKernel(const amd::Kernel& kernel, const device::VirtualDevice* vdev) {
+  virtual bool validateKernel(const amd::Kernel& kernel,
+                              const device::VirtualDevice* vdev,
+                              bool coop_groups = false) {
     return true;
   };
 
