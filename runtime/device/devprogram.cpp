@@ -696,10 +696,6 @@ bool Program::compileImplLC(const std::string& sourceCode,
   // Set whole program mode
   driverOptions.append(AMDGPU_EARLY_INLINE_ALL_OPTION " -mllvm -amdgpu-prelink");
 
-  if (device().settings().lcWavefrontSize64_) {
-     driverOptions.append(" -mwavefrontsize64");
-  }
-
   // Iterate through each source code and dump it into tmp
   std::fstream f;
   std::vector<std::string> headerFileNames(headers.size());
@@ -1527,10 +1523,6 @@ bool Program::linkImplLC(amd::option::Options* options) {
   // Set whole program mode
   codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
 
-  if (device().settings().lcWavefrontSize64_) {
-     codegenOptions.append(" -mwavefrontsize64");
-  }
-
   // NOTE: The params is also used to identy cached code object. This parameter
   //       should not contain any dyanamically generated filename.
   char* executable = nullptr;
@@ -1663,11 +1655,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
     Data* unsafe_math_bc = C->NewBufferReference(DT_LLVM_BC,
       reinterpret_cast<const char*>(std::get<1>(unsafe_math)), std::get<2>(unsafe_math));
 
-    auto wavefrontsize64 = get_oclc_wavefrontsize64(device().settings().lcWavefrontSize64_);
-    Data* wavefrontsize64_bc = C->NewBufferReference(DT_LLVM_BC,
-      reinterpret_cast<const char*>(std::get<1>(wavefrontsize64)), std::get<2>(wavefrontsize64));
-
-    if (!correctly_rounded_sqrt_bc || !daz_opt_bc || !finite_only_bc || !unsafe_math_bc || !wavefrontsize64_bc) {
+    if (!correctly_rounded_sqrt_bc || !daz_opt_bc || !finite_only_bc || !unsafe_math_bc) {
       buildLog_ += "Error: Failed to open the control functions.\n";
       return false;
     }
@@ -1676,7 +1664,6 @@ bool Program::linkImplLC(amd::option::Options* options) {
     inputs.push_back(daz_opt_bc);
     inputs.push_back(finite_only_bc);
     inputs.push_back(unsafe_math_bc);
-    inputs.push_back(wavefrontsize64_bc);
 
     // open the linked output
     std::vector<std::string> linkOptions;
@@ -1753,10 +1740,6 @@ bool Program::linkImplLC(amd::option::Options* options) {
   codegenOptions.append(" -mno-code-object-v3");
   // Set whole program mode
   codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
-
-  if (device().settings().lcWavefrontSize64_) {
-      codegenOptions.append(" -mwavefrontsize64");
-  }
 
   // Tokenize the options string into a vector of strings
   std::istringstream strstr(codegenOptions);

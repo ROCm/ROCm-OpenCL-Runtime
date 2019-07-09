@@ -533,13 +533,10 @@ class Settings : public amd::HeapObject {
       uint singleFpDenorm_ : 1;       //!< Support Single FP Denorm
       uint hsailExplicitXnack_ : 1;   //!< Xnack in hsail path for this deivce
       uint useLightning_ : 1;         //!< Enable LC path for this device
-      uint enableWgpMode_ : 1;        //!< Enable WGP mode for this device
-      uint enableWave32Mode_ : 1;     //!< Enable Wave32 mode for this device
-      uint lcWavefrontSize64_ : 1;    //!< Enable Wave64 mode for this device
       uint enableXNACK_ : 1;          //!< Enable XNACK feature
       uint enableCoopGroups_ : 1;     //!< Enable cooperative groups feature
       uint enableCoopMultiDeviceGroups_ : 1; //!< Enable cooperative groups multi device
-      uint reserved_ : 12;
+      uint reserved_ : 15;
     };
     uint value_;
   };
