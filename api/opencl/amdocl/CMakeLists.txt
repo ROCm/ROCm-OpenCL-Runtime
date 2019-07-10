@@ -72,8 +72,8 @@ add_library(amdocl64 SHARED
   ${ADDITIONAL_LIBRARIES}
 )
 if(${USE_COMGR_LIBRARY} MATCHES "yes")
-  target_link_libraries(amdocl64 oclelf pthread dl ${ROCR_LIBRARIES})
+  target_link_libraries(amdocl64 oclelf pthread dl ${ROCT_LIBRARIES} ${ROCR_LIBRARIES})
 else()
-  target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCR_LIBRARIES})
+  target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCT_LIBRARIES} ${ROCR_LIBRARIES})
 endif()
 install(TARGETS amdocl64 LIBRARY DESTINATION lib/x86_64 COMPONENT applications)
