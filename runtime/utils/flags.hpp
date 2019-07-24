@@ -123,7 +123,7 @@ release(bool, GPU_IFH_MODE, false,                                            \
         "1 = Enable GPU IFH (infinitely fast hardware) mode. Any other value keeps setting disabled.") \
 release(bool, GPU_MIPMAP, true,                                               \
         "Enables GPU mipmap extension")                                       \
-release(uint, GPU_ENABLE_PAL, IF(IS_LIGHTNING,1,2),                           \
+release(uint, GPU_ENABLE_PAL, 2,                                              \
         "Enables PAL backend. 0 - GSL(default), 1 - PAL, 2 - GSL and PAL")    \
 release(bool, DISABLE_DEFERRED_ALLOC, false,                                  \
         "Disables deferred memory allocation on device")                      \
@@ -167,7 +167,7 @@ release_on_stg(bool, PAL_DISABLE_SDMA, false,                                 \
         "1 = Disable SDMA for PAL")                                           \
 release(uint, PAL_RGP_DISP_COUNT, 50,                                         \
         "The number of dispatches for RGP capture with SQTT")                 \
-release(bool, GPU_ENABLE_LC, IS_LIGHTNING,                                    \
+release(bool, GPU_ENABLE_LC, true,                                            \
         "Enables LC path")                                                    \
 release(bool, GPU_ENABLE_HW_P2P, false,                                       \
         "Enables HW P2P path")                                                \
@@ -175,6 +175,8 @@ release(bool, GPU_ENABLE_COOP_GROUPS, false,                                  \
          "Enables cooperative group launch")                                  \
 release(uint, GPU_MAX_COMMAND_BUFFERS, 8,                                     \
          "The maximum number of command buffers allocated per queue")         \
+release(bool, GPU_IMAGE_BUFFER_WAR, true,                                     \
+        "Enables image buffer workaround")                                    \
 release(cstring, HIP_VISIBLE_DEVICES, "",                                     \
         "Only devices whose index is present in the sequence are visible to HIP")  \
 release(cstring, CUDA_VISIBLE_DEVICES, "",                                    \

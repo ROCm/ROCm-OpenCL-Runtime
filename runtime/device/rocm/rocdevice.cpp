@@ -142,6 +142,7 @@ Device::Device(hsa_agent_t bkendDevice)
     , pro_device_(nullptr)
     , pro_ena_(false)
     , freeMem_(0)
+    , vgpusAccess_("Virtual GPU List Ops Lock", true)
     , hsa_exclusive_gpu_access_(false)
     , numOfVgpus_(0) {
   group_segment_.handle = 0;
@@ -209,8 +210,7 @@ bool NullDevice::initCompiler(bool isOffline) {
   acl_error error;
   if (!compilerHandle_) {
     aclCompilerOptions opts = {
-      sizeof(aclCompilerOptions_0_8),
-      IF(IS_LIGHTNING, "libamdoclcl64.so", NULL),
+      sizeof(aclCompilerOptions_0_8), "libamdoclcl64.so",
       NULL, NULL, NULL, NULL, NULL, NULL
     };
     compilerHandle_ = aclCompilerInit(&opts, &error);
@@ -570,6 +570,7 @@ bool Device::init() {
           if (agent.handle == static_cast<Device*>(device2)->getBackendDevice().handle) {
             // Device2 can have access to device1
             device2->p2pDevices_.push_back(as_cl(device1));
+            device1->p2p_access_devices_.push_back(device2);
           }
         }
       }
