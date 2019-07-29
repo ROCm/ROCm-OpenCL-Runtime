@@ -30,6 +30,7 @@ include_directories(${CMAKE_SOURCE_DIR}/compiler/lib/loaders/elf/utils/libelf)
 add_subdirectory(device/rocm)
 
 if(${USE_COMGR_LIBRARY} MATCHES "yes")
+  add_definitions(-DUSE_COMGR_LIBRARY -DCOMGR_DYN_DLL)
   find_package(amd_comgr REQUIRED CONFIG)
   include_directories("$<TARGET_PROPERTY:amd_comgr,INTERFACE_INCLUDE_DIRECTORIES>")
   set(COMGR_CPP device/comgrctx.cpp)
