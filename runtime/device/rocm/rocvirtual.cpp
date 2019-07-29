@@ -605,6 +605,9 @@ VirtualGPU::~VirtualGPU() {
     virtualQueue_->release();
   }
 
+  // Lock the device to make the following thread safe
+  amd::ScopedLock lock(roc_device_.vgpusAccess());
+
   --roc_device_.numOfVgpus_;  // Virtual gpu unique index decrementing
   roc_device_.vgpus_.erase(roc_device_.vgpus_.begin() + index());
   for (uint idx = index(); idx < roc_device_.vgpus().size(); ++idx) {
@@ -1309,7 +1312,7 @@ void VirtualGPU::submitCopyMemoryP2P(amd::CopyMemoryP2PCommand& cmd) {
             amd::Coord3D cpSize(copy_size);
 
             // Perform 2 step transfer with staging buffer
-            result &= dev().xferMgr().copyBuffer(
+            result &= srcDevMem->dev().xferMgr().copyBuffer(
               *srcDevMem, *dstStgMem, srcOrigin, stageOffset, cpSize);
             srcOrigin.c[0] += copy_size;
             result &= dstDevMem->dev().xferMgr().copyBuffer(
