@@ -5,6 +5,9 @@ if (POLICY CMP0048)
   set(PROJ_VERSION VERSION 1.5.0)
 endif()
 
+# FIXME(kzhuravl): Remove following line after enabling COMGR by default
+set(USE_COMGR_LIBRARY "no" CACHE STRING "Do not enable COMGR by default")
+
 # Build ROCm-OpenCL with ccache if the package is present.
 set(ROCM_OPENCL_CCACHE_BUILD OFF CACHE BOOL "Set to ON for a ccache enabled build")
 if(ROCM_OPENCL_CCACHE_BUILD)
@@ -14,9 +17,13 @@ if(ROCM_OPENCL_CCACHE_BUILD)
   else()
     message(FATAL_ERROR "Unable to find the program ccache. Set ROCM_OPENCL_CCACHE_BUILD to OFF")
   endif()
-  set(LLVM_CCACHE_BUILD ON CACHE BOOL "")
-  set(ROCM_DEVICE_LIBS_CCACHE_BUILD ON CACHE BOOL "")
-  set(ROCM_OPENCL_DRIVER_CCACHE_BUILD ON CACHE BOOL "")
+
+  # FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+  if (${USE_COMGR_LIBRARY} STREQUAL "no")
+    set(LLVM_CCACHE_BUILD ON CACHE BOOL "")
+    set(ROCM_DEVICE_LIBS_CCACHE_BUILD ON CACHE BOOL "")
+    set(ROCM_OPENCL_DRIVER_CCACHE_BUILD ON CACHE BOOL "")
+  endif() # if (${USE_COMGR_LIBRARY} STREQUAL "no")
 endif()
 
 project(OpenCL-ROCm)
@@ -28,48 +35,61 @@ set(CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules"
   )
 
-set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "")
-set(LLVM_BUILD_TOOLS OFF CACHE BOOL "")
-set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE BOOL "")
-set(LLVM_TARGETS_TO_BUILD "AMDGPU" CACHE STRING "")
-set(CLANG_ENABLE_ARCMT OFF CACHE BOOL "")
-set(CLANG_ENABLE_STATIC_ANALYZER OFF CACHE BOOL "")
+# FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+if (${USE_COMGR_LIBRARY} STREQUAL "no")
+  set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "")
+  set(LLVM_BUILD_TOOLS OFF CACHE BOOL "")
+  set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE BOOL "")
+  set(LLVM_TARGETS_TO_BUILD "AMDGPU" CACHE STRING "")
+  set(CLANG_ENABLE_ARCMT OFF CACHE BOOL "")
+  set(CLANG_ENABLE_STATIC_ANALYZER OFF CACHE BOOL "")
 
-# override default option value in library and driver
-set(GENERIC_IS_ZERO ON CACHE BOOL ON FORCE)
+  # override default option value in library and driver
+  set(GENERIC_IS_ZERO ON CACHE BOOL ON FORCE)
 
-add_subdirectory(compiler/llvm EXCLUDE_FROM_ALL)
+  add_subdirectory(compiler/llvm EXCLUDE_FROM_ALL)
 
-find_package(LLVM REQUIRED CONFIG PATHS ${CMAKE_BINARY_DIR}/compiler/llvm NO_DEFAULT_PATH)
+  find_package(LLVM REQUIRED CONFIG PATHS ${CMAKE_BINARY_DIR}/compiler/llvm NO_DEFAULT_PATH)
 
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-include(AddLLVM)
+  list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+  include(AddLLVM)
 
-add_definitions(${LLVM_DEFINITIONS})
-# TODO: add find_package for Clang and lld, and also use LLVM/Clang variables got from their config
-include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/include)
-include_directories(${CMAKE_BINARY_DIR}/compiler/llvm/tools/clang/include)
-include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/tools/lld/include)
+  add_definitions(${LLVM_DEFINITIONS})
+  # TODO: add find_package for Clang and lld, and also use LLVM/Clang variables got from their config
+  include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/tools/clang/include)
+  include_directories(${CMAKE_BINARY_DIR}/compiler/llvm/tools/clang/include)
+  include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/tools/lld/include)
 
-# TODO: move AMDGPU.h header to include folder
-include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/lib/Target/AMDGPU)
-include_directories(${CMAKE_BINARY_DIR}/compiler/llvm/lib/Target/AMDGPU)
+  # TODO: move AMDGPU.h header to include folder
+  include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/lib/Target/AMDGPU)
+  include_directories(${CMAKE_BINARY_DIR}/compiler/llvm/lib/Target/AMDGPU)
+
+  set(BUILD_HC_LIB OFF CACHE BOOL "")
+  set(ROCM_DEVICELIB_INCLUDE_TESTS OFF CACHE BOOL "")
+  set(AMDGCN_TARGETS_LIB_LIST "AMDGCN_LIB_TARGETS")
+  set(AMDGCN_TARGETS_LIB_DEPS "AMDGCN_DEP_TARGETS")
+  set(AMDGPU_TARGET_TRIPLE "amdgcn-amd-amdhsa")
+  add_subdirectory(library/amdgcn EXCLUDE_FROM_ALL)
+  add_subdirectory(compiler/driver EXCLUDE_FROM_ALL)
+
+  install(PROGRAMS $<TARGET_FILE:clang> $<TARGET_FILE:lld>
+          DESTINATION bin/x86_64
+          COMPONENT libraries)
+
+  foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
+    get_target_property(lib_file_name ${AMDGCN_LIB_TARGET} ARCHIVE_OUTPUT_NAME)
+    get_target_property(lib_file_path ${AMDGCN_LIB_TARGET} ARCHIVE_OUTPUT_DIRECTORY)
+    install(FILES ${lib_file_path}/${lib_file_name}.amdgcn.bc
+          DESTINATION lib/x86_64/bitcode
+          COMPONENT libraries)
+  endforeach()
+endif() # if (${USE_COMGR_LIBRARY} STREQUAL "no")
 
 if(${USE_COMGR_LIBRARY} MATCHES "yes")
   set(COMGR_DYN_DLL "yes")
-  add_definitions(-DCOMGR_DYN_DLL="yes")
-  include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/include)
+  add_definitions(-DCOMGR_DYN_DLL)
   add_definitions(-DUSE_COMGR_LIBRARY)
-else()
-  add_subdirectory(compiler/driver EXCLUDE_FROM_ALL)
 endif()
-
-set(BUILD_HC_LIB OFF CACHE BOOL "")
-set(ROCM_DEVICELIB_INCLUDE_TESTS OFF CACHE BOOL "")
-set(AMDGCN_TARGETS_LIB_LIST "AMDGCN_LIB_TARGETS")
-set(AMDGCN_TARGETS_LIB_DEPS "AMDGCN_DEP_TARGETS")
-set(AMDGPU_TARGET_TRIPLE "amdgcn-amd-amdhsa")
-add_subdirectory(library/amdgcn EXCLUDE_FROM_ALL)
 
 add_subdirectory(compiler/lib/loaders/elf/utils/libelf)
 
@@ -86,10 +106,6 @@ add_subdirectory(api/opencl/khronos/icd)
 
 add_subdirectory(tools/clinfo)
 
-install(PROGRAMS $<TARGET_FILE:clang> $<TARGET_FILE:lld>
-        DESTINATION bin/x86_64
-        COMPONENT libraries)
-
 install(PROGRAMS $<TARGET_FILE:OpenCL>
         DESTINATION lib/x86_64
         COMPONENT applications)
@@ -104,14 +120,6 @@ install(DIRECTORY
         COMPONENT libraries
         USE_SOURCE_PERMISSIONS
         PATTERN cl_egl.h EXCLUDE)
-
-foreach(AMDGCN_LIB_TARGET ${AMDGCN_LIB_TARGETS})
-  get_target_property(lib_file_name ${AMDGCN_LIB_TARGET} ARCHIVE_OUTPUT_NAME)
-  get_target_property(lib_file_path ${AMDGCN_LIB_TARGET} ARCHIVE_OUTPUT_DIRECTORY)
-  install(FILES ${lib_file_path}/${lib_file_name}.amdgcn.bc
-        DESTINATION lib/x86_64/bitcode
-        COMPONENT libraries)
-endforeach()
 
 ## CPack standard variables
 set ( CPACK_PACKAGE_NAME "rocm-opencl" )
