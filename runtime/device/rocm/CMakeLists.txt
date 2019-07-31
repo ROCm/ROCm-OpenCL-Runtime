@@ -29,7 +29,7 @@ add_library(oclrocm OBJECT
 )
 set_target_properties(oclrocm PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+# FIXME: Remove following if block after enabling COMGR by default
 if (${USE_COMGR_LIBRARY} STREQUAL "no")
   # generating libraries.amdgcn.inc
   file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/libraries.amdgcn.inc "// Automatically generated file; DO NOT EDIT.\n")

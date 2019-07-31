@@ -5,7 +5,7 @@ if (POLICY CMP0048)
   set(PROJ_VERSION VERSION 1.5.0)
 endif()
 
-# FIXME(kzhuravl): Remove following line after enabling COMGR by default
+# FIXME: Remove following line after enabling COMGR by default
 set(USE_COMGR_LIBRARY "no" CACHE STRING "Do not enable COMGR by default")
 
 # Build ROCm-OpenCL with ccache if the package is present.
@@ -18,7 +18,7 @@ if(ROCM_OPENCL_CCACHE_BUILD)
     message(FATAL_ERROR "Unable to find the program ccache. Set ROCM_OPENCL_CCACHE_BUILD to OFF")
   endif()
 
-  # FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+  # FIXME: Remove following if block after enabling COMGR by default
   if (${USE_COMGR_LIBRARY} STREQUAL "no")
     set(LLVM_CCACHE_BUILD ON CACHE BOOL "")
     set(ROCM_DEVICE_LIBS_CCACHE_BUILD ON CACHE BOOL "")
@@ -35,7 +35,7 @@ set(CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules"
   )
 
-# FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+# FIXME: Remove following if block after enabling COMGR by default
 if (${USE_COMGR_LIBRARY} STREQUAL "no")
   set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "")
   set(LLVM_BUILD_TOOLS OFF CACHE BOOL "")

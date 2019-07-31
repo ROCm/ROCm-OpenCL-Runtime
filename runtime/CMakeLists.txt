@@ -18,7 +18,7 @@ include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers/opencl2.2)
 
-# FIXME(kzhuravl): Remove following if block after enabling COMGR by default
+# FIXME: Remove following if block after enabling COMGR by default
 if (${USE_COMGR_LIBRARY} STREQUAL "no")
   include_directories(${CMAKE_SOURCE_DIR}/compiler/llvm/include)
 endif() # if (${USE_COMGR_LIBRARY} STREQUAL "no")
