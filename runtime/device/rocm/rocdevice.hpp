@@ -107,7 +107,7 @@ class NullDevice : public amd::Device {
   const Settings& settings() const { return reinterpret_cast<Settings&>(*settings_); }
 
   //! Construct an HSAIL program object from the ELF assuming it is valid
-  virtual device::Program* createProgram(amd::option::Options* options = nullptr);
+  virtual device::Program* createProgram(amd::Program& owner, amd::option::Options* options = nullptr);
   const AMDDeviceInfo& deviceInfo() const { return deviceInfo_; }
   //! Gets the backend device for the Null device type
   virtual hsa_agent_t getBackendDevice() const {
@@ -300,7 +300,7 @@ class Device : public NullDevice {
   virtual device::VirtualDevice* createVirtualDevice(amd::CommandQueue* queue = nullptr);
 
   //! Construct an HSAIL program object from the ELF assuming it is valid
-  virtual device::Program* createProgram(amd::option::Options* options = nullptr);
+  virtual device::Program* createProgram(amd::Program& owner, amd::option::Options* options = nullptr);
 
   virtual device::Memory* createMemory(amd::Memory& owner) const;
 
@@ -406,6 +406,8 @@ class Device : public NullDevice {
 
   VirtualGPU* xferQueue() const;
 
+  std::map<hsa_queue_t*, int>& QueuePool() { return queue_pool_; }
+
  private:
   static hsa_ven_amd_loader_1_00_pfn_t amd_loader_ext_table;
 
@@ -436,6 +438,7 @@ class Device : public NullDevice {
   std::atomic<size_t> freeMem_;   //!< Total of free memory available
   mutable amd::Monitor vgpusAccess_;     //!< Lock to serialise virtual gpu list access
   bool hsa_exclusive_gpu_access_;  //!< TRUE if current device was moved into exclusive GPU access mode
+  std::map<hsa_queue_t*, int> queue_pool_;  //!< Pool of HSA queues for recycling
 
  public:
   amd::Atomic<uint> numOfVgpus_;  //!< Virtual gpu unique index

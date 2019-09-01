@@ -93,6 +93,10 @@ static HsaDeviceId getHsaDeviceId(hsa_agent_t device, uint32_t& pci_id) {
       return HSA_VEGA12_ID;
     case 906:
       return HSA_VEGA20_ID;
+    case 908:
+      return HSA_GFX908_ID;
+    case 1010:
+      return HSA_GFX1010_ID;
     default:
       return HSA_INVALID_DEVICE_ID;
   }
@@ -766,12 +770,12 @@ bool Device::create(bool sramEccEnabled) {
   return true;
 }
 
-device::Program* NullDevice::createProgram(amd::option::Options* options) {
+device::Program* NullDevice::createProgram(amd::Program& owner, amd::option::Options* options) {
   device::Program* program;
   if (settings().useLightning_) {
-    program = new LightningProgram(*this);
+    program = new LightningProgram(*this, owner);
   } else {
-    program = new HSAILProgram(*this);
+    program = new HSAILProgram(*this, owner);
   }
 
   if (program == nullptr) {
@@ -813,12 +817,12 @@ void Device::ReleaseExclusiveGpuAccess(VirtualGPU& vgpu) const {
   vgpusAccess().unlock();
 }
 
-device::Program* Device::createProgram(amd::option::Options* options) {
+device::Program* Device::createProgram(amd::Program& owner, amd::option::Options* options) {
   device::Program* program;
   if (settings().useLightning_) {
-    program = new LightningProgram(*this);
+    program = new LightningProgram(*this, owner);
   } else {
-    program = new HSAILProgram(*this);
+    program = new HSAILProgram(*this, owner);
   }
 
   if (program == nullptr) {
@@ -1403,10 +1407,6 @@ device::VirtualDevice* Device::createVirtualDevice(amd::CommandQueue* queue) {
   if (!virtualDevice->create(profiling)) {
     delete virtualDevice;
     return nullptr;
-  }
-
-  if (profiling) {
-    hsa_amd_profiling_set_profiler_enabled(virtualDevice->gpu_queue(), 1);
   }
 
   return virtualDevice;
