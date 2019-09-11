@@ -120,13 +120,13 @@ bool Settings::create(bool fullProfile, int gfxipVersion) {
       enableCoopGroups_ = true;
       enableCoopMultiDeviceGroups_ = true;
     }
-    if (gfxipVersion >= 1000) {
-      lcWavefrontSize64_ = false;
-    }
-
   } else {
     // Also enable AMD double precision extension?
     enableExtension(ClAmdFp64);
+  }
+
+  if (gfxipVersion >= 1000) {
+    lcWavefrontSize64_ = false;
   }
 
   // Override current device settings

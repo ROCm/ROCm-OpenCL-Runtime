@@ -65,8 +65,9 @@ inline static std::vector<std::string> splitSpaceSeparatedString(const char *str
 }
 
 // ================================================================================================
-Program::Program(amd::Device& device)
+Program::Program(amd::Device& device, amd::Program& owner)
     : device_(device),
+      owner_(owner),
       type_(TYPE_NONE),
       flags_(0),
       clBinary_(nullptr),
@@ -94,6 +95,12 @@ Program::Program(amd::Device& device)
 // ================================================================================================
 Program::~Program() {
   clear();
+
+  /* Delete the undefined memory object */
+  for (auto it = undef_mem_obj_.begin(); it != undef_mem_obj_.end(); ++it) {
+    (*it)->release();
+  }
+
 #if defined(USE_COMGR_LIBRARY)
   for (auto const& kernelMeta : kernelMetadataMap_) {
     amd::Comgr::destroy_metadata(kernelMeta.second);
@@ -125,26 +132,6 @@ bool Program::compileImpl(const std::string& sourceCode,
 // ================================================================================================
 #if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 static std::string llvmBin_(amd::Os::getEnvironment("LLVM_BIN"));
-
-#if defined(ATI_OS_WIN)
-static BOOL CALLBACK checkLLVM_BIN(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* lpContex) {
-  if (llvmBin_.empty()) {
-    HMODULE hm = nullptr;
-    if (GetModuleHandleExA(
-      GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-      (LPCSTR)&amd::Device::init, &hm)) {
-      char path[1024];
-      GetModuleFileNameA(hm, path, sizeof(path));
-      llvmBin_ = path;
-      size_t pos = llvmBin_.rfind('\\');
-      if (pos != std::string::npos) {
-        llvmBin_.resize(pos);
-      }
-    }
-  }
-  return TRUE;
-}
-#endif  // defined (ATI_OS_WINDOWS)
 
 #if defined(ATI_OS_LINUX)
 static pthread_once_t once = PTHREAD_ONCE_INIT;
@@ -185,10 +172,6 @@ static void checkLLVM_BIN() {
 
 #if !defined(USE_COMGR_LIBRARY)
 std::unique_ptr<amd::opencl_driver::Compiler> Program::newCompilerInstance() {
-#if defined(ATI_OS_WIN)
-  static INIT_ONCE initOnce;
-  InitOnceExecuteOnce(&initOnce, checkLLVM_BIN, nullptr, nullptr);
-#endif  // defined(ATI_OS_WIN)
 #if defined(ATI_OS_LINUX)
   pthread_once(&once, checkLLVM_BIN);
 #endif  // defined(ATI_OS_LINUX)
@@ -276,7 +259,7 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
 
   // save the binary to the file as output file name is specified
   if (!outFileName.empty()) {
-    std::ofstream f(outFileName.c_str(), std::ios::trunc);
+    std::ofstream f(outFileName.c_str(), std::ios::trunc | std::ios::binary);
     if (f.is_open()) {
       f.write(binary, binarySize);
       f.close();
@@ -706,7 +689,7 @@ bool Program::compileImplLC(const std::string& sourceCode,
   driverOptions.push_back("-amdgpu-prelink");
 
   if (device().settings().lcWavefrontSize64_) {
-     driverOptions.push_back("-mwavefrontsize64");
+    driverOptions.push_back("-mwavefrontsize64");
   }
 
   // Iterate through each source code and dump it into tmp
@@ -1453,7 +1436,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
     case ACL_TYPE_ISA: {
       amd::Comgr::destroy_data_set(inputs);
       binary_t isaBinary = binary();
-      if (OCL_DUMP_CODE_OBJECT) {
+      if (GPU_DUMP_CODE_OBJECT) {
         dumpCodeObject(std::string{(const char*)isaBinary.first, isaBinary.second});
       }
       return setKernels(options, const_cast<void *>(isaBinary.first), isaBinary.second);
@@ -1482,6 +1465,9 @@ bool Program::linkImplLC(amd::option::Options* options) {
     }
     if (options->oVariables->UnsafeMathOpt || options->oVariables->FastRelaxedMath) {
         linkOptions.push_back("unsafe_math");
+    }
+    if (device().settings().lcWavefrontSize64_) {
+        linkOptions.push_back("wavefrontsize64");
     }
 
     amd_comgr_status_t status = addCodeObjData(llvmBinary_.data(), llvmBinary_.size(),
@@ -1547,7 +1533,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
 #endif
 
   if (device().settings().lcWavefrontSize64_) {
-     codegenOptions.push_back("-mwavefrontsize64");
+    codegenOptions.push_back("-mwavefrontsize64");
   }
 
   // NOTE: The params is also used to identy cached code object. This parameter
@@ -1686,7 +1672,8 @@ bool Program::linkImplLC(amd::option::Options* options) {
     Data* wavefrontsize64_bc = C->NewBufferReference(DT_LLVM_BC,
       reinterpret_cast<const char*>(std::get<1>(wavefrontsize64)), std::get<2>(wavefrontsize64));
 
-    if (!correctly_rounded_sqrt_bc || !daz_opt_bc || !finite_only_bc || !unsafe_math_bc || !wavefrontsize64_bc) {
+    if (!correctly_rounded_sqrt_bc || !daz_opt_bc || !finite_only_bc || !unsafe_math_bc ||
+        !wavefrontsize64_bc) {
       buildLog_ += "Error: Failed to open the control functions.\n";
       return false;
     }
@@ -1774,7 +1761,7 @@ bool Program::linkImplLC(amd::option::Options* options) {
   codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
 
   if (device().settings().lcWavefrontSize64_) {
-      codegenOptions.append(" -mwavefrontsize64");
+    codegenOptions.append(" -mwavefrontsize64");
   }
 
   // Tokenize the options string into a vector of strings
@@ -3073,4 +3060,168 @@ bool Program::FindGlobalVarSize(void* binary, size_t binSize) {
 #endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
   return true;
 }
+
+#if defined(USE_COMGR_LIBRARY)
+amd_comgr_status_t getSymbolFromModule(amd_comgr_symbol_t symbol, void* userData) {
+  size_t nlen = 0;
+  size_t* userDataInfo = nullptr;
+  amd_comgr_status_t status;
+  amd_comgr_symbol_type_t type;
+  std::vector<std::string>* var_names = nullptr;
+
+  /* Unpack the user data */
+  SymbolInfo* sym_info = reinterpret_cast<SymbolInfo*>(userData);
+
+  if (!sym_info) {
+    return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
+  }
+
+  /* Retrieve the symbol info */
+  status = amd::Comgr::symbol_get_info(symbol, AMD_COMGR_SYMBOL_INFO_NAME_LENGTH, &nlen);
+  if (status != AMD_COMGR_STATUS_SUCCESS) {
+    return status;
+  }
+
+  /* Retrieve the symbol name */
+  char* name = new char[nlen + 1];
+  status = amd::Comgr::symbol_get_info(symbol, AMD_COMGR_SYMBOL_INFO_NAME, name);
+  if (status != AMD_COMGR_STATUS_SUCCESS) {
+    return status;
+  }
+
+  /* Retrieve the symbol type*/
+  status = amd::Comgr::symbol_get_info(symbol, AMD_COMGR_SYMBOL_INFO_TYPE, &type);
+  if (status != AMD_COMGR_STATUS_SUCCESS) {
+    return status;
+  }
+
+  /* If symbol type is object(Variable) add it to vector */
+  if ((std::strcmp(name, "") != 0) && (type == sym_info->sym_type)) {
+    sym_info->var_names->push_back(std::string(name));
+  }
+
+  delete[] name;
+  return status;
 }
+
+bool Program::getSymbolsFromCodeObj(std::vector<std::string>* var_names, amd_comgr_symbol_type_t sym_type) const {
+  amd_comgr_status_t status = AMD_COMGR_STATUS_SUCCESS;
+  amd_comgr_data_t dataObject;
+  SymbolInfo sym_info;
+  bool ret_val = true;
+
+  do {
+    /* Create comgr data */
+    status = amd::Comgr::create_data(AMD_COMGR_DATA_KIND_EXECUTABLE, &dataObject);
+    if (status != AMD_COMGR_STATUS_SUCCESS) {
+      buildLog_ += "COMGR:  Cannot create comgr data \n";
+      ret_val = false;
+      break;
+    }
+
+    /* Set the binary as a dataObject */
+    status = amd::Comgr::set_data(dataObject,static_cast<size_t>(clBinary_->data().second),
+                                  reinterpret_cast<const char*>(clBinary_->data().first));
+    if (status != AMD_COMGR_STATUS_SUCCESS) {
+      buildLog_ += "COMGR:  Cannot set comgr data \n";
+      ret_val = false;
+      break;
+    }
+
+    /* Pack the user data */
+    sym_info.sym_type = sym_type;
+    sym_info.var_names = var_names;
+
+  /* Iterate through list of symbols */
+    status = amd::Comgr::iterate_symbols(dataObject, getSymbolFromModule, &sym_info);
+    if (status != AMD_COMGR_STATUS_SUCCESS) {
+      buildLog_ += "COMGR:  Cannot iterate comgr symbols \n";
+      ret_val = false;
+      break;
+    }
+  } while (0);
+
+  return ret_val;
+}
+#endif /* USE_COMGR_LIBRARY */
+
+bool Program::getGlobalVarFromCodeObj(std::vector<std::string>* var_names) const {
+#if defined(USE_COMGR_LIBRARY)
+  return getSymbolsFromCodeObj(var_names, AMD_COMGR_SYMBOL_TYPE_OBJECT);
+#else
+  return true;
+#endif
+}
+
+bool Program::getUndefinedVarFromCodeObj(std::vector<std::string>* var_names) const {
+#if defined(USE_COMGR_LIBRARY)
+  return getSymbolsFromCodeObj(var_names, AMD_COMGR_SYMBOL_TYPE_NOTYPE);
+#else
+  return true;
+#endif
+}
+
+bool Program::getUndefinedVarInfo(std::string var_name, void** var_addr, size_t* var_size) {
+  if (owner()->varcallback != nullptr) {
+    return owner()->varcallback(as_cl(owner()), var_name.c_str(), var_addr, var_size);
+  } else {
+    buildLog_ += "SVAR HIP Call back is not set \n";
+    return false;
+  }
+}
+
+bool Program::defineUndefinedVars() {
+  size_t address = 0;
+  size_t hsize = 0;
+  void* dptr = nullptr;
+  void* hptr = nullptr;
+  device::Memory* dev_mem = nullptr;
+  amd::Memory* amd_mem_obj = nullptr;
+  std::vector<std::string> var_names;
+
+  if (!getUndefinedVarFromCodeObj(&var_names)) {
+    return false;
+  }
+
+  for (auto it = var_names.begin(); it != var_names.end(); ++it) {
+    if (!getUndefinedVarInfo(*it, &hptr, &hsize)) {
+      continue;
+    }
+
+    amd_mem_obj = new (device().GlbCtx()) amd::Buffer(device().GlbCtx(),
+                                                      CL_MEM_USE_HOST_PTR, hsize);
+    if (amd_mem_obj == nullptr) {
+      LogError("[OCL] failed to create a mem object!");
+      return false;
+    }
+
+    if (!amd_mem_obj->create(hptr)) {
+      LogError("[OCL] failed to create a svm hidden buffer!");
+      amd_mem_obj->release();
+      return false;
+    }
+
+    undef_mem_obj_.push_back(amd_mem_obj);
+
+    dev_mem = amd_mem_obj->getDeviceMemory(device());
+    if (dev_mem == nullptr) {
+      LogError("[OCL] failed to create a mem object!");
+      return false;
+    }
+
+    dptr = reinterpret_cast<void*>(dev_mem->virtualAddress());
+    if (dev_mem == nullptr) {
+      LogError("[OCL] failed to create a mem object!");
+      return false;
+    }
+
+    if(!defineGlobalVar(it->c_str(), dptr)) {
+      LogError("[OCL] failed to define global var");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+} /* namespace device*/
