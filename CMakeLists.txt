@@ -8,23 +8,16 @@ endif()
 # FIXME: Remove following line after enabling COMGR by default
 set(USE_COMGR_LIBRARY "no" CACHE STRING "Do not enable COMGR by default")
 
-# Build ROCm-OpenCL with ccache if the package is present.
-set(ROCM_OPENCL_CCACHE_BUILD OFF CACHE BOOL "Set to ON for a ccache enabled build")
-if(ROCM_OPENCL_CCACHE_BUILD)
+# Optionally, build OpenCL Runtime with ccache.
+set(ROCM_CCACHE_BUILD OFF CACHE BOOL "Set to ON for a ccache enabled build")
+if (ROCM_CCACHE_BUILD)
   find_program(CCACHE_PROGRAM ccache)
-  if(CCACHE_PROGRAM)
+  if (CCACHE_PROGRAM)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_PROGRAM})
   else()
-    message(FATAL_ERROR "Unable to find the program ccache. Set ROCM_OPENCL_CCACHE_BUILD to OFF")
-  endif()
-
-  # FIXME: Remove following if block after enabling COMGR by default
-  if (${USE_COMGR_LIBRARY} STREQUAL "no")
-    set(LLVM_CCACHE_BUILD ON CACHE BOOL "")
-    set(ROCM_DEVICE_LIBS_CCACHE_BUILD ON CACHE BOOL "")
-    set(ROCM_OPENCL_DRIVER_CCACHE_BUILD ON CACHE BOOL "")
-  endif() # if (${USE_COMGR_LIBRARY} STREQUAL "no")
-endif()
+    message(WARNING "Unable to find ccache. Falling back to real compiler")
+  endif() # if (CCACHE_PROGRAM)
+endif() # if (ROCM_CCACHE_BUILD)
 
 project(OpenCL-ROCm)
 
