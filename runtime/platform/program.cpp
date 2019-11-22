@@ -112,7 +112,7 @@ cl_int Program::addDeviceProgram(Device& device, const void* image, size_t lengt
     // if we have options from binary and input options was not specified
     if (opts != NULL && emptyOptions) {
       std::string sBinOptions = std::string((char*)opts, symSize);
-      if (!amd::option::parseAllOptions(sBinOptions, *options)) {
+      if (!amd::option::parseAllOptions(sBinOptions, *options, false, false)) {
         programLog_ = options->optionsLog();
         LogError("Parsing compilation options from binary failed.");
         return CL_INVALID_COMPILER_OPTIONS;
@@ -155,7 +155,8 @@ cl_int Program::addDeviceProgram(Device& device, const void* image, size_t lengt
     // load the compiler options from the binary if it is not provided
     std::string sBinOptions = program->compileOptions();
     if (!sBinOptions.empty() && emptyOptions) {
-      if (!amd::option::parseAllOptions(sBinOptions, *options)) {
+      if (!amd::option::parseAllOptions(sBinOptions, *options, false,
+          device.settings().useLightning_)) {
         programLog_ = options->optionsLog();
         LogError("Parsing compilation options from binary failed.");
         return CL_INVALID_COMPILER_OPTIONS;
@@ -205,12 +206,6 @@ cl_int Program::compile(const std::vector<Device*>& devices, size_t numHeaders,
     }
     remove_g_option(cppstr);
   }
-  option::Options parsedOptions;
-  if (!ParseAllOptions(cppstr, parsedOptions, optionChangable)) {
-    programLog_ = parsedOptions.optionsLog();
-    LogError("Parsing compile options failed.");
-    return CL_INVALID_COMPILER_OPTIONS;
-  }
 
   std::vector<const std::string*> headers(numHeaders);
   for (size_t i = 0; i < numHeaders; ++i) {
@@ -220,6 +215,14 @@ cl_int Program::compile(const std::vector<Device*>& devices, size_t numHeaders,
 
   // Compile the program programs associated with the given devices.
   for (const auto& it : devices) {
+    option::Options parsedOptions;
+    constexpr bool LinkOptsOnly = false;
+    if (!ParseAllOptions(cppstr, parsedOptions, optionChangable, LinkOptsOnly,
+                         it->settings().useLightning_)) {
+      programLog_ = parsedOptions.optionsLog();
+      LogError("Parsing compile options failed.");
+      return CL_INVALID_COMPILER_OPTIONS;
+    }
     device::Program* devProgram = getDeviceProgram(*it);
     if (devProgram == NULL) {
       const binary_t& bin = binary(*it);
@@ -290,15 +293,17 @@ cl_int Program::link(const std::vector<Device*>& devices, size_t numInputs,
     }
     remove_g_option(cppstr);
   }
-  option::Options parsedOptions;
-  if (!ParseAllOptions(cppstr, parsedOptions, optionChangable, true)) {
-    programLog_ = parsedOptions.optionsLog();
-    LogError("Parsing link options failed.");
-    return CL_INVALID_LINKER_OPTIONS;
-  }
 
   // Link the program programs associated with the given devices.
   for (const auto& it : devices) {
+    option::Options parsedOptions;
+    constexpr bool LinkOptsOnly = true;
+    if (!ParseAllOptions(cppstr, parsedOptions, optionChangable, LinkOptsOnly,
+                         it->settings().useLightning_)) {
+      programLog_ = parsedOptions.optionsLog();
+      LogError("Parsing link options failed.");
+      return CL_INVALID_LINKER_OPTIONS;
+    }
     // find the corresponding device program in each input program
     std::vector<device::Program*> inputDevPrograms(numInputs);
     bool found = false;
@@ -482,15 +487,18 @@ cl_int Program::build(const std::vector<Device*>& devices, const char* options,
     }
     remove_g_option(cppstr);
   }
-  option::Options parsedOptions;
-  if (!ParseAllOptions(cppstr, parsedOptions, optionChangable)) {
-    programLog_ = parsedOptions.optionsLog();
-    LogError("Parsing compile options failed.");
-    return CL_INVALID_COMPILER_OPTIONS;
-  }
 
   // Build the program programs associated with the given devices.
   for (const auto& it : devices) {
+    option::Options parsedOptions;
+    constexpr bool LinkOptsOnly = false;
+    if (!ParseAllOptions(cppstr, parsedOptions, optionChangable, LinkOptsOnly,
+                         it->settings().useLightning_)) {
+      programLog_ = parsedOptions.optionsLog();
+      LogError("Parsing compile options failed.");
+      return CL_INVALID_COMPILER_OPTIONS;
+    }
+
     device::Program* devProgram = getDeviceProgram(*it);
     if (devProgram == NULL) {
       const binary_t& bin = binary(*it);
@@ -595,7 +603,7 @@ int Program::GetOclCVersion(const char* clVer) {
 }
 
 bool Program::ParseAllOptions(const std::string& options, option::Options& parsedOptions,
-                              bool optionChangable, bool linkOptsOnly) {
+                              bool optionChangable, bool linkOptsOnly, bool isLC) {
   std::string allOpts = options;
   if (optionChangable) {
     if (linkOptsOnly) {
@@ -622,7 +630,7 @@ bool Program::ParseAllOptions(const std::string& options, option::Options& parse
       }
     }
   }
-  return amd::option::parseAllOptions(allOpts, parsedOptions, linkOptsOnly);
+  return amd::option::parseAllOptions(allOpts, parsedOptions, linkOptsOnly, isLC);
 }
 
 bool Symbol::setDeviceKernel(const Device& device, const device::Kernel* func) {

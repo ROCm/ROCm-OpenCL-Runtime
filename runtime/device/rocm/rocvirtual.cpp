@@ -51,16 +51,6 @@ namespace roc {
 static const uint16_t kInvalidAql =
     (HSA_PACKET_TYPE_INVALID << HSA_PACKET_HEADER_TYPE);
 
-static const uint16_t kDispatchPacketHeaderNoSync =
-    (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
-    (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
-    (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
-
-static const uint16_t kDispatchPacketHeader =
-    (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) | (1 << HSA_PACKET_HEADER_BARRIER) |
-    (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
-    (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
-
 static const uint16_t kBarrierPacketHeader =
     (HSA_PACKET_TYPE_BARRIER_AND << HSA_PACKET_HEADER_TYPE) | (1 << HSA_PACKET_HEADER_BARRIER) |
     (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
@@ -103,7 +93,7 @@ void VirtualGPU::MemoryDependency::validate(VirtualGPU& gpu, const Memory* memor
 
   if (maxMemObjectsInQueue_ == 0) {
     // Sync AQL packets
-    gpu.setAqlHeader(kDispatchPacketHeader);
+    gpu.setAqlHeader(gpu.dispatchPacketHeader_);
     return;
   }
 
@@ -138,7 +128,7 @@ void VirtualGPU::MemoryDependency::validate(VirtualGPU& gpu, const Memory* memor
 
   if (flushL1Cache) {
     // Sync AQL packets
-    gpu.setAqlHeader(kDispatchPacketHeader);
+    gpu.setAqlHeader(gpu.dispatchPacketHeader_);
 
     // Clear memory dependency state
     const static bool All = true;
@@ -195,9 +185,9 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
   const amd::KernelSignature& signature = kernel.signature();
   const amd::KernelParameters& kernelParams = kernel.parameters();
 
-  if (!cooperativeGroups) {
+  if (!cooperativeGroups && memoryDependency().maxMemObjectsInQueue() != 0) {
     // AQL packets
-    setAqlHeader(kDispatchPacketHeaderNoSync);
+    setAqlHeader(dispatchPacketHeaderNoSync_);
   }
 
   // Mark the tracker with a new kernel,
@@ -236,7 +226,7 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
         return false;
       } else if (sync) {
         // Sync AQL packets
-        setAqlHeader(kDispatchPacketHeader);
+        setAqlHeader(dispatchPacketHeader_);
         // Clear memory dependency state
         const static bool All = true;
         memoryDependency().clear(!All);
@@ -295,7 +285,7 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
           //! This condition is for SVM fine-grain
           if (dev().isFineGrainedSystem(true)) {
             // Sync AQL packets
-            setAqlHeader(kDispatchPacketHeader);
+            setAqlHeader(dispatchPacketHeader_);
             // Clear memory dependency state
             const static bool All = true;
             memoryDependency().clear(!All);
@@ -381,7 +371,7 @@ bool VirtualGPU::processMemObjects(const amd::Kernel& kernel, const_address para
 
   if (hsaKernel.program()->hasGlobalStores()) {
     // Sync AQL packets
-    setAqlHeader(kDispatchPacketHeader);
+    setAqlHeader(dispatchPacketHeader_);
     // Clear memory dependency state
     const static bool All = true;
     memoryDependency().clear(!All);
@@ -555,6 +545,7 @@ bool VirtualGPU::releaseGpuMemoryFence() {
 
 VirtualGPU::VirtualGPU(Device& device)
     : device::VirtualDevice(device),
+      gpu_queue_(nullptr),
       roc_device_(device),
       virtualQueue_(nullptr),
       deviceQueueSize_(0),
@@ -575,7 +566,28 @@ VirtualGPU::VirtualGPU(Device& device)
   kernarg_pool_base_ = nullptr;
   kernarg_pool_size_ = 0;
   kernarg_pool_cur_offset_ = 0;
-  aqlHeader_ = kDispatchPacketHeaderNoSync;
+
+  if (device.settings().fenceScopeAgent_) {
+    dispatchPacketHeaderNoSync_ =
+      (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+      (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+    dispatchPacketHeader_=
+      (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) | (1 << HSA_PACKET_HEADER_BARRIER) |
+      (HSA_FENCE_SCOPE_AGENT << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+  } else {
+    dispatchPacketHeaderNoSync_ =
+      (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+    dispatchPacketHeader_=
+      (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) | (1 << HSA_PACKET_HEADER_BARRIER) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_ACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_RELEASE_FENCE_SCOPE);
+  }
+
+  aqlHeader_ = dispatchPacketHeader_;
   barrier_signal_.handle = 0;
 
   // Note: Virtual GPU device creation must be a thread safe operation
@@ -631,12 +643,9 @@ VirtualGPU::~VirtualGPU() {
   for (uint idx = index(); idx < roc_device_.vgpus().size(); ++idx) {
     roc_device_.vgpus()[idx]->index_--;
   }
-  // Decrement the counter
-  roc_device_.QueuePool()[gpu_queue_]--;
-  // Release the queue if the counter is 0
-  if (roc_device_.QueuePool()[gpu_queue_] == 0) {
-    hsa_status_t err = hsa_queue_destroy(gpu_queue_);
-    roc_device_.QueuePool().erase(gpu_queue_);
+
+  if (gpu_queue_) {
+    roc_device_.releaseQueue(gpu_queue_);
   }
 }
 
@@ -646,38 +655,10 @@ bool VirtualGPU::create(bool profilingEna) {
     return false;
   }
 
-  uint32_t queue_max_packets = 0;
-  if (HSA_STATUS_SUCCESS !=
-      hsa_agent_get_info(gpu_device_, HSA_AGENT_INFO_QUEUE_MAX_SIZE, &queue_max_packets)) {
-    return false;
-  }
-
   // Pick a reasonable queue size
   uint32_t queue_size = 1024;
-  queue_size = (queue_max_packets < queue_size) ? queue_max_packets : queue_size;
-  if (roc_device_.QueuePool().size() < GPU_MAX_HW_QUEUES) {
-    while (hsa_queue_create(gpu_device_, queue_size, HSA_QUEUE_TYPE_MULTI, nullptr, nullptr,
-                          std::numeric_limits<uint>::max(), std::numeric_limits<uint>::max(),
-                          &gpu_queue_) != HSA_STATUS_SUCCESS) {
-      queue_size >>= 1;
-      if (queue_size < 64) {
-        return false;
-      }
-    }
-    hsa_amd_profiling_set_profiler_enabled(gpu_queue(), 1);
-    roc_device_.QueuePool().insert({gpu_queue_, 1});
-  } else {
-    int usage = std::numeric_limits<int>::max();
-    // Loop through all allocated queues and find the lowest usage
-    for (const auto it : roc_device_.QueuePool()) {
-      if (it.second < usage) {
-        gpu_queue_ = it.first;
-        usage = it.second;
-      }
-    }
-    // Increment the usage of the current queue
-    roc_device_.QueuePool()[gpu_queue_]++;
-  }
+  gpu_queue_ = roc_device_.acquireQueue(queue_size);
+  if (!gpu_queue_) return false;
 
   if (!initPool(dev().settings().kernargPoolSize_, (profilingEna) ? queue_size : 0)) {
     LogError("Couldn't allocate arguments/signals for the queue");
@@ -727,7 +708,7 @@ bool VirtualGPU::create(bool profilingEna) {
 
 bool VirtualGPU::initPool(size_t kernarg_pool_size, uint signal_pool_count) {
   kernarg_pool_size_ = kernarg_pool_size;
-  kernarg_pool_base_ = reinterpret_cast<char*>(roc_device_.hostAlloc(kernarg_pool_size_, 1, true));
+  kernarg_pool_base_ = reinterpret_cast<char*>(roc_device_.hostAlloc(kernarg_pool_size_, 1));
   if (kernarg_pool_base_ == nullptr) {
     return false;
   }
@@ -2052,7 +2033,7 @@ bool VirtualGPU::submitKernelInternal(const amd::NDRangeContainer& sizes, const 
       return false;
     }
 
-    LogPrintfInfo("!\tShaderName : %s\n", gpuKernel.name().c_str());
+    LogPrintfInfo("[%zx]!\tShaderName : %s\n", std::this_thread::get_id(), gpuKernel.name().c_str());
 
     // Check if runtime has to setup hidden arguments
     for (uint32_t i = signature.numParameters(); i < signature.numParametersAll(); ++i) {
@@ -2203,9 +2184,6 @@ void VirtualGPU::submitKernel(amd::NDRangeKernelCommand& vcmd) {
         workgroups += (vcmd.sizes().global()[i] / vcmd.sizes().local()[i]);
       }
     }
-    uint32_t counter = workgroups *
-      amd::alignUp(vcmd.sizes().local().product(), dev().info().wavefrontWidth_) /
-      dev().info().wavefrontWidth_;
 
     // Get device queue for exclusive GPU access
     VirtualGPU* queue = dev().xferQueue();
@@ -2217,10 +2195,10 @@ void VirtualGPU::submitKernel(amd::NDRangeKernelCommand& vcmd) {
     amd::ScopedLock lock(queue->blitMgr().lockXfer());
     queue->profilingBegin(vcmd);
 
-    static_cast<KernelBlitManager&>(queue->blitMgr()).RunGwsInit(counter);
+    static_cast<KernelBlitManager&>(queue->blitMgr()).RunGwsInit(workgroups);
 
     // Sync AQL packets
-    queue->setAqlHeader(kDispatchPacketHeader);
+    queue->setAqlHeader(dispatchPacketHeader_);
 
     // Submit kernel to HW
     if (!queue->submitKernelInternal(vcmd.sizes(), vcmd.kernel(), vcmd.parameters(),
