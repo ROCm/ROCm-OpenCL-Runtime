@@ -638,7 +638,7 @@ getOptionDesc(std::string& options, size_t StartPos, bool IsShortForm,
 
 bool
 processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
-              bool IsPrefixOption, bool IsOffFlag)
+              bool IsPrefixOption, bool IsOffFlag, bool IsLC)
 {
     OptionVariables*  ovars = Opts.oVariables;
     OptionDescriptor*    od = &OptDescTable[OptDescTableIx];
@@ -788,9 +788,9 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
 
         Opts.clcOptions.append(" -D__FAST_RELAXED_MATH__=1");
         Opts.clangOptions.push_back("-D__FAST_RELAXED_MATH__=1");
-#if defined(WITH_LIGHTNING_COMPILER) // w/a for SWDEV-116690
-        Opts.clangOptions.push_back("-cl-fast-relaxed-math");
-#endif
+        if (IsLC) { // w/a for SWDEV-116690
+            Opts.clangOptions.push_back("-cl-fast-relaxed-math");
+        }
 
         // fall-through to handle UnsafeMathOpt
     case OID_UnsafeMathOpt:
@@ -914,12 +914,12 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
         }
         break;
 
-#if defined(WITH_LIGHTNING_COMPILER)
     case OID_OptUseNative:
-        Opts.llvmOptions.append(" -mllvm -amdgpu-use-native=");
-        Opts.llvmOptions.append(sval);
+        if (IsLC) {
+            Opts.llvmOptions.append(" -mllvm -amdgpu-use-native=");
+            Opts.llvmOptions.append(sval);
+        }
         break;
-#endif
 
     case OID_WFComma:
     case OID_WBComma:
@@ -942,13 +942,13 @@ processOption(int OptDescTableIx, Options& Opts, const std::string& Value,
             }
             else if (((OptionIdentifier)OptDescTableIx) == OID_WBComma) {
                 Opts.llvmOptions.append(" ");
-#if defined(WITH_LIGHTNING_COMPILER)
-                Opts.llvmOptions.append("-mllvm ");
-#endif
+                if (IsLC) {
+                    Opts.llvmOptions.append("-mllvm ");
+                }
                 Opts.llvmOptions.append(sval);
             }
             else if (((OptionIdentifier)OptDescTableIx) == OID_WHComma) {
-                  Opts.finalizerOptions.push_back(sval);
+                Opts.finalizerOptions.push_back(sval);
             }
         }
         break;
@@ -1013,7 +1013,7 @@ namespace amd {
 namespace option {
 
 bool
-parseAllOptions(std::string& options, Options& Opts, bool linkOptsOnly)
+parseAllOptions(std::string& options, Options& Opts, bool linkOptsOnly, bool isLC)
 {
     Opts.origOptionStr = options;
     OptionVariables*  ovars = Opts.oVariables;
@@ -1164,7 +1164,7 @@ parseAllOptions(std::string& options, Options& Opts, bool linkOptsOnly)
         }
 
         if (!processOption(option_ndx, Opts, value, isPrefix_option,
-                           (isPrefix_mno || isPrefix_fno))) {
+                           (isPrefix_mno || isPrefix_fno), isLC)) {
             // Keep the optionsLog set in processOption().
             std::string tmpStr("Invalid option: ");
             tmpStr += options.substr(bpos, (pos == std::string::npos)

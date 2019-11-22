@@ -688,6 +688,10 @@ bool Program::compileImplLC(const std::string& sourceCode,
   driverOptions.push_back("-mllvm");
   driverOptions.push_back("-amdgpu-prelink");
 
+  if (!device().settings().enableWgpMode_) {
+    driverOptions.push_back("-mcumode");
+  }
+
   if (device().settings().lcWavefrontSize64_) {
     driverOptions.push_back("-mwavefrontsize64");
   }
@@ -1532,6 +1536,10 @@ bool Program::linkImplLC(amd::option::Options* options) {
   codegenOptions.push_back("-amdgpu-early-inline-all");
 #endif
 
+  if (!device().settings().enableWgpMode_) {
+    codegenOptions.push_back("-mcumode");
+  }
+
   if (device().settings().lcWavefrontSize64_) {
     codegenOptions.push_back("-mwavefrontsize64");
   }
@@ -1760,6 +1768,10 @@ bool Program::linkImplLC(amd::option::Options* options) {
   // Set whole program mode
   codegenOptions.append(" -mllvm -amdgpu-internalize-symbols" AMDGPU_EARLY_INLINE_ALL_OPTION);
 
+  if (!device().settings().enableWgpMode_) {
+    codegenOptions.append(" -mcumode");
+  }
+
   if (device().settings().lcWavefrontSize64_) {
     codegenOptions.append(" -mwavefrontsize64");
   }
@@ -1873,6 +1885,14 @@ bool Program::linkImplHSAIL(amd::option::Options* options) {
     if (device().isFineGrainedSystem(true)) {
       fin_options.append(" -sc-xnack-iommu");
     }
+
+  if (device().settings().enableWave32Mode_) {
+    fin_options.append(" -force-wave-size-32");
+  }
+
+  if (device().settings().enableWgpMode_) {
+    fin_options.append(" -force-wgp-mode");
+  }
 
   if (device().settings().hsailExplicitXnack_) {
     fin_options.append(" -xnack");
@@ -2083,7 +2103,7 @@ cl_int Program::link(const std::vector<Program*>& inputPrograms, const char* ori
       buildLog_ += "Internal error: Get compile options failed.";
     }
   } else {
-    if (!amd::option::parseAllOptions(compileOptions_, options)) {
+    if (!amd::option::parseAllOptions(compileOptions_, options, false, isLC())) {
       buildStatus_ = CL_BUILD_ERROR;
       buildLog_ += options.optionsLog();
       LogError("Parsing compile options failed.");
@@ -2372,7 +2392,7 @@ bool Program::getCompileOptionsAtLinking(const std::vector<Program*>& inputProgr
 
     amd::option::Options compileOptions2;
     amd::option::Options* thisCompileOptions = i == 0 ? &compileOptions : &compileOptions2;
-    if (!amd::option::parseAllOptions(program->compileOptions_, *thisCompileOptions)) {
+    if (!amd::option::parseAllOptions(program->compileOptions_, *thisCompileOptions, false, isLC())) {
       buildLog_ += thisCompileOptions->optionsLog();
       LogError("Parsing compile options failed.");
       return false;
@@ -2389,7 +2409,7 @@ bool Program::getCompileOptionsAtLinking(const std::vector<Program*>& inputProgr
         linkOptsCanOverwrite = true;
       } else {
         amd::option::Options thisLinkOptions;
-        if (!amd::option::parseLinkOptions(program->linkOptions_, thisLinkOptions)) {
+        if (!amd::option::parseLinkOptions(program->linkOptions_, thisLinkOptions, isLC())) {
           buildLog_ += thisLinkOptions.optionsLog();
           LogError("Parsing link options failed.");
           return false;
@@ -2554,8 +2574,7 @@ bool Program::setBinary(const char* binaryIn, size_t size) {
     case ET_DYN: {
       char* sect = nullptr;
       size_t sz = 0;
-      // FIXME: we should look for the e_machine to detect an HSACO.
-      if (clBinary()->elfIn()->getSection(amd::OclElf::TEXT, &sect, &sz) && sect && sz > 0) {
+      if (clBinary()->elfIn()->isHsaCo()) {
         setType(TYPE_EXECUTABLE);
       } else {
         setType(TYPE_LIBRARY);
@@ -2602,7 +2621,7 @@ aclType Program::getCompilationStagesFromBinary(std::vector<aclType>& completeSt
     }
     std::string sCurOptions = compileOptions_ + linkOptions_;
     amd::option::Options curOptions;
-    if (!amd::option::parseAllOptions(sCurOptions, curOptions)) {
+    if (!amd::option::parseAllOptions(sCurOptions, curOptions, false, isLC())) {
       buildLog_ += curOptions.optionsLog();
       LogError("Parsing compile options failed.");
       return ACL_TYPE_DEFAULT;
@@ -2713,7 +2732,7 @@ aclType Program::getCompilationStagesFromBinary(std::vector<aclType>& completeSt
     }
     std::string sCurOptions = compileOptions_ + linkOptions_;
     amd::option::Options curOptions;
-    if (!amd::option::parseAllOptions(sCurOptions, curOptions)) {
+    if (!amd::option::parseAllOptions(sCurOptions, curOptions, false, isLC())) {
       buildLog_ += curOptions.optionsLog();
       LogError("Parsing compile options failed.");
       return ACL_TYPE_DEFAULT;
@@ -2823,12 +2842,12 @@ aclType Program::getNextCompilationStageFromBinary(amd::option::Options* options
       linkOptions_ = sCurLinkOptions;
 
       amd::option::Options curOptions, binOptions;
-      if (!amd::option::parseAllOptions(sBinOptions, binOptions)) {
+      if (!amd::option::parseAllOptions(sBinOptions, binOptions, false, isLC())) {
         buildLog_ += binOptions.optionsLog();
         LogError("Parsing compile options from binary failed.");
         return ACL_TYPE_DEFAULT;
       }
-      if (!amd::option::parseAllOptions(sCurOptions, curOptions)) {
+      if (!amd::option::parseAllOptions(sCurOptions, curOptions, false, isLC())) {
         buildLog_ += curOptions.optionsLog();
         LogError("Parsing compile options failed.");
         return ACL_TYPE_DEFAULT;
@@ -2890,6 +2909,9 @@ bool Program::createKernelMetadataMap() {
 
   if (status == AMD_COMGR_STATUS_SUCCESS) {
     status = amd::Comgr::get_metadata_list_size(kernelsMD, &size);
+  } else if (amd::IS_HIP) {
+    // Assume an empty binary. HIP may have binaries with just global variables
+    return true;
   }
 
   for (size_t i = 0; i < size && status == AMD_COMGR_STATUS_SUCCESS; i++) {

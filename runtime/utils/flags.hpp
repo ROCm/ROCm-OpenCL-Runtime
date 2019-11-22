@@ -44,7 +44,7 @@ release(bool, REMOTE_ALLOC, false,                                            \
         "Use remote memory for the global heap allocation")                   \
 release(uint, GPU_MAX_HEAP_SIZE, 100,                                         \
         "Set maximum size of the GPU heap to % of board memory")              \
-release(uint, GPU_STAGING_BUFFER_SIZE, 512,                                   \
+release(uint, GPU_STAGING_BUFFER_SIZE, 1024,                                  \
         "Size of the GPU staging buffer in KiB")                              \
 release(bool, GPU_DUMP_BLIT_KERNELS, false,                                   \
         "Dump the kernels for blit manager")                                  \
@@ -68,9 +68,9 @@ release(cstring, AMD_OCL_SC_LIB, 0,                                           \
         "Set shader compiler shared library name or path")                    \
 debug(bool, AMD_OCL_ENABLE_MESSAGE_BOX, false,                                \
         "Enable the error dialog on Windows")                                 \
-release(size_t, GPU_PINNED_XFER_SIZE, 16,                                     \
+release(size_t, GPU_PINNED_XFER_SIZE, 32,                                     \
         "The pinned buffer size for pinning in read/write transfers")         \
-release(size_t, GPU_PINNED_MIN_XFER_SIZE, 512,                                \
+release(size_t, GPU_PINNED_MIN_XFER_SIZE, 1024,                               \
         "The minimal buffer size for pinned read/write transfers in KBytes")  \
 release(size_t, GPU_RESOURCE_CACHE_SIZE, 64,                                  \
         "The resource cache size in MB")                                      \
@@ -167,6 +167,13 @@ release_on_stg(bool, PAL_DISABLE_SDMA, false,                                 \
         "1 = Disable SDMA for PAL")                                           \
 release(uint, PAL_RGP_DISP_COUNT, 50,                                         \
         "The number of dispatches for RGP capture with SQTT")                 \
+release(uint, PAL_MALL_POLICY, 0,                                             \
+        "Controls the behaviour of allocations with respect to the MALL"      \
+        "0 = MALL policy is decided by KMD"                                   \
+        "1 = Allocations are never put through the MALL"                      \
+        "2 = Allocations will always be put through the MALL")                \
+release(bool, GPU_ENABLE_WAVE32_MODE, true,                                   \
+        "Enables Wave32 compilation in HW if available")                      \
 release(bool, GPU_ENABLE_LC, true,                                            \
         "Enables LC path")                                                    \
 release(bool, GPU_ENABLE_HW_P2P, false,                                       \
@@ -183,6 +190,8 @@ release(cstring, HIP_VISIBLE_DEVICES, "",                                     \
         "Only devices whose index is present in the sequence are visible to HIP")  \
 release(cstring, CUDA_VISIBLE_DEVICES, "",                                    \
         "Only devices whose index is present in the sequence are visible to HIP")    \
+release(bool, GPU_ENABLE_WGP_MODE, true,                                      \
+        "Enables WGP Mode in HW if available")                                \
 release(bool, GPU_DUMP_CODE_OBJECT, false,                                    \
         "Enable dump code object")                                            \
 release(uint, GPU_MAX_USWC_ALLOC_SIZE, 2048,                                  \
@@ -193,8 +202,15 @@ release(uint, AMD_SERIALIZE_KERNEL, 0,                                        \
         "0x2 = Wait for completion after enqueue 0x3 = both")                 \
 release(uint, AMD_SERIALIZE_COPY, 0,                                          \
         "Serialize copies, 0x1 = Wait for completion before enqueue"          \
-        "0x2 = Wait for completion after enqueue 0x3 = both")
-
+        "0x2 = Wait for completion after enqueue 0x3 = both")                 \
+release(bool, PAL_ALWAYS_RESIDENT, false,                                     \
+        "Force memory resources to become resident at allocation time")       \
+release(uint, HIP_HOST_COHERENT, 0,                                           \
+        "Coherent memory in hipHostMalloc, 0x1 = memory is coherent with host"\
+        "0x0 = memory is not coherent between host and GPU")                  \
+release(uint, AMD_OPT_FLUSH, 0,                                               \
+        "Kernel flush option , 0x0 = Use system-scope fence operations."      \
+        "0x1 = Use device-scope fence operations when possible.")
 namespace amd {
 
 extern bool IS_HIP;
