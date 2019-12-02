@@ -765,7 +765,9 @@ bool Device::create(bool sramEccEnabled) {
     }
   }
 
-  xferQueue();
+  if (xferQueue() == nullptr) {
+    return false;
+  }
 
   return true;
 }
@@ -1810,6 +1812,7 @@ VirtualGPU* Device::xferQueue() const {
     thisDevice->xferQueue_ = reinterpret_cast<VirtualGPU*>(thisDevice->createVirtualDevice());
     if (!xferQueue_) {
       LogError("Couldn't create the device transfer manager!");
+      return nullptr;
     }
   }
   xferQueue_->enableSyncBlit();
