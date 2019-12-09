@@ -14,6 +14,26 @@ namespace amd { /*@{*/
 
 enum LogLevel { LOG_NONE = 0, LOG_ERROR = 1, LOG_WARNING = 2, LOG_INFO = 3, LOG_DEBUG = 4 };
 
+enum LogMask {
+  LOG_API       = 0x00000001, //!< API call
+  LOG_CMD       = 0x00000002, //!< Kernel and Copy Commands and Barriers
+  LOG_WAIT      = 0x00000004, //!< Synchronization and waiting for commands to finish
+  LOG_AQL       = 0x00000008, //!< Decode and display AQL packets
+  LOG_QUEUE     = 0x00000010, //!< Queue commands and queue contents
+  LOG_SIG       = 0x00000020, //!< Signal creation, allocation, pool
+  LOG_LOCK      = 0x00000040, //!< Locks and thread-safety code.
+  LOG_KERN      = 0x00000080, //!< kernel creations and arguments, etc.
+  LOG_COPY      = 0x00000100, //!< Copy debug
+  LOG_COPY2     = 0x00000200, //!< Detailed copy debug
+  LOG_RESOURCE  = 0x00000400, //!< Resource allocation, performance-impacting events.
+  LOG_INIT      = 0x00000800, //!< Initialization and shutdown
+  LOG_MISC      = 0x00001000, //!< misc debug, not yet classified
+  LOG_AQL2      = 0x00002000, //!< Show raw bytes of AQL packet
+  LOG_CODE      = 0x00004000, //!< Show code creation debug
+  LOG_CMD2      = 0x00008000, //!< More detailed command info, including barrier commands
+  LOG_ALWAYS    = 0xFFFFFFFF, //!< Log always even mask flag is zero
+};
+
 //! \cond ignore
 extern "C" void breakpoint();
 //! \endcond
@@ -87,38 +107,26 @@ inline void warning(const char* msg) { amd::report_warning(msg); }
 #define Untested(msg) (void)(0)
 #endif /*NDEBUG*/
 
-#ifdef DEBUG
 #define Log(level, msg)                                                                            \
   do {                                                                                             \
     if (LOG_LEVEL >= level) {                                                                      \
       amd::log_entry(level, __FILE__, __LINE__, msg);                                              \
     }                                                                                              \
   } while (false)
-#else  // !DEBUG
-#define Log(level, msg) (void)(0)
-#endif  // !DEBUG
 
-#ifdef DEBUG
 #define LogTS(level, msg)                                                                          \
   do {                                                                                             \
     if (LOG_LEVEL >= level) {                                                                      \
       amd::log_timestamped(level, __FILE__, __LINE__, msg);                                        \
     }                                                                                              \
   } while (false)
-#else  // !DEBUG
-#define Log(level, msg) (void)(0)
-#endif  // !DEBUG
 
-#ifdef DEBUG
 #define Logf(level, format, ...)                                                                   \
   do {                                                                                             \
     if (LOG_LEVEL >= level) {                                                                      \
       amd::log_printf(level, __FILE__, __LINE__, format, __VA_ARGS__);                             \
     }                                                                                              \
   } while (false)
-#else  // !DEBUG
-#define Logf(level, format, ...) (void)(0)
-#endif  // !DEBUG
 
 #define CondLog(cond, msg)                                                                         \
   do {                                                                                             \
@@ -127,30 +135,61 @@ inline void warning(const char* msg) { amd::report_warning(msg); }
     }                                                                                              \
   } while (false)
 
-#ifdef DEBUG
 #define LogGuarantee(cond, level, msg)                                                             \
   do {                                                                                             \
     if (LOG_LEVEL >= level) {                                                                      \
       guarantee(cond);                                                                             \
     }                                                                                              \
   } while (false)
-#else  // !DEBUG
-#define LogGuarantee(cond, level, msg) (void)(0)
-#endif  // !DEBUG
 
-#define LogInfo(msg) Log(amd::LOG_INFO, msg)
-#define LogError(msg) Log(amd::LOG_ERROR, msg)
-#define LogWarning(msg) Log(amd::LOG_WARNING, msg)
 
 #define LogTSInfo(msg) LogTS(amd::LOG_INFO, msg)
 #define LogTSError(msg) LogTS(amd::LOG_ERROR, msg)
 #define LogTSWarning(msg) LogTS(amd::LOG_WARNING, msg)
 
-#define LogPrintfDebug(format, ...) Logf(amd::LOG_DEBUG, format, __VA_ARGS__)
-#define LogPrintfError(format, ...) Logf(amd::LOG_ERROR, format, __VA_ARGS__)
-#define LogPrintfWarning(format, ...) Logf(amd::LOG_WARNING, format, __VA_ARGS__)
-#define LogPrintfInfo(format, ...) Logf(amd::LOG_INFO, format, __VA_ARGS__)
-
 #define DebugInfoGuarantee(cond) LogGuarantee(cond, amd::LOG_INFO, "Warning")
+
+/* backend and compiler use LOG_LEVEL macro from makefile. Define GPU_LOG_MASK for them. */
+#if defined(LOG_LEVEL)
+#define GPU_LOG_MASK 0x7FFFFFFF
+#endif
+
+// You may define CL_LOG to enable following log functions even for release build
+#define CL_LOG
+
+#ifdef CL_LOG
+#define ClPrint(level, mask, format, ...)                                                          \
+  do {                                                                                             \
+    if (LOG_LEVEL >= level) {                                                                      \
+      if (GPU_LOG_MASK & mask || mask == amd::LOG_ALWAYS) {                                        \
+        amd::log_printf(level, __FILE__, __LINE__, format, ##__VA_ARGS__);                         \
+      }                                                                                            \
+    }                                                                                              \
+  } while (false)
+
+#define ClCondPrint(level, mask, condition, format, ...)                                           \
+  do {                                                                                             \
+    if (LOG_LEVEL >= level && (condition)) {                                                       \
+      if (GPU_LOG_MASK & mask || mask == amd::LOG_ALWAYS) {                                        \
+        amd::log_printf(level, __FILE__, __LINE__, format, ##__VA_ARGS__);                         \
+      }                                                                                            \
+    }                                                                                              \
+  } while (false)
+
+#else /*CL_LOG*/
+#define ClPrint(level, mask, format, ...) (void)(0)
+#define ClCondPrint(level, mask, condition, format, ...) (void)(0)
+#endif /*CL_LOG*/
+
+#define ClTrace(level, mask) ClPrint(level, mask, "%s", __func__)
+
+#define LogInfo(msg) ClPrint(amd::LOG_INFO, amd::LOG_ALWAYS, msg)
+#define LogError(msg) ClPrint(amd::LOG_ERROR, amd::LOG_ALWAYS, msg)
+#define LogWarning(msg) ClPrint(amd::LOG_WARNING, amd::LOG_ALWAYS, msg)
+
+#define LogPrintfDebug(format, ...) ClPrint(amd::LOG_DEBUG, amd::LOG_ALWAYS, format, __VA_ARGS__)
+#define LogPrintfError(format, ...) ClPrint(amd::LOG_ERROR, amd::LOG_ALWAYS, format, __VA_ARGS__)
+#define LogPrintfWarning(format, ...) ClPrint(amd::LOG_WARNING, amd::LOG_ALWAYS, format, __VA_ARGS__)
+#define LogPrintfInfo(format, ...) ClPrint(amd::LOG_INFO, amd::LOG_ALWAYS, format, __VA_ARGS__)
 
 #endif /*DEBUG_HPP_*/

@@ -746,12 +746,18 @@ static inline uint32_t GetOclArgumentTypeOCL(const KernelArgMD& lcArg, bool* isH
   case ValueKind::HiddenPrintfBuffer:
     *isHidden = true;
     return amd::KernelParameterDescriptor::HiddenPrintfBuffer;
+  case ValueKind::HiddenHostcallBuffer:
+    *isHidden = true;
+    return amd::KernelParameterDescriptor::HiddenHostcallBuffer;
   case ValueKind::HiddenDefaultQueue:
     *isHidden = true;
     return amd::KernelParameterDescriptor::HiddenDefaultQueue;
   case ValueKind::HiddenCompletionAction:
     *isHidden = true;
     return amd::KernelParameterDescriptor::HiddenCompletionAction;
+  case ValueKind::HiddenMultiGridSyncArg:
+    *isHidden = true;
+    return amd::KernelParameterDescriptor::HiddenMultiGridSync;
   case ValueKind::HiddenNone:
   default:
     *isHidden = true;
@@ -775,6 +781,9 @@ static inline uint32_t GetOclArgumentTypeOCL(const aclArgData* argInfo, bool* is
     }
     else if (strcmp(&argInfo->argStr[2], "printf_buffer") == 0) {
       return amd::KernelParameterDescriptor::HiddenPrintfBuffer;
+    }
+    else if (strcmp(&argInfo->argStr[2], "hostcall_buffer") == 0) {
+      return amd::KernelParameterDescriptor::HiddenHostcallBuffer;
     }
     else if (strcmp(&argInfo->argStr[2], "vqueue_pointer") == 0) {
       return amd::KernelParameterDescriptor::HiddenDefaultQueue;
@@ -1394,9 +1403,8 @@ bool Kernel::SetAvailableSgprVgpr(const std::string& targetIdent) {
   return (status == AMD_COMGR_STATUS_SUCCESS);
 }
 
-bool Kernel::GetPrintfStr(const amd_comgr_metadata_node_t programMD,
-                          std::vector<std::string>* printfStr) {
-
+bool Kernel::GetPrintfStr(std::vector<std::string>* printfStr) {
+  const amd_comgr_metadata_node_t programMD = prog().metadata();
   amd_comgr_metadata_node_t printfMeta;
 
   amd_comgr_status_t status = amd::Comgr::metadata_lookup(programMD,
@@ -1554,7 +1562,7 @@ void Kernel::InitParameters(const amd_comgr_metadata_node_t kernelMD) {
   uint32_t numParams = params.size();
   // Append the hidden arguments to the OCL arguments
   params.insert(params.end(), hiddenParams.begin(), hiddenParams.end());
-  createSignature(params, numParams, amd::KernelSignature::ABIVersion_1);
+  createSignature(params, numParams, amd::KernelSignature::ABIVersion_2);
 }
 #else // not define USE_COMGR_LIBRARY
 void Kernel::InitParameters(const KernelMD& kernelMD, uint32_t argBufferSize) {
@@ -1629,7 +1637,7 @@ void Kernel::InitParameters(const KernelMD& kernelMD, uint32_t argBufferSize) {
   uint32_t numParams = params.size();
   // Append the hidden arguments to the OCL arguments
   params.insert(params.end(), hiddenParams.begin(), hiddenParams.end());
-  createSignature(params, numParams, amd::KernelSignature::ABIVersion_1);
+  createSignature(params, numParams, amd::KernelSignature::ABIVersion_2);
 }
 #endif  // defined(USE_COMGR_LIBRARY)
 #endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
@@ -1729,7 +1737,7 @@ void Kernel::InitPrintf(const std::vector<std::string>& printfInfoStrings) {
     } while (end != std::string::npos);
 
     if (tokens.size() < 2) {
-      LogPrintfWarning("Invalid PrintInfo string: \"%s\"", str.c_str());
+      ClPrint(amd::LOG_WARNING, amd::LOG_KERN, "Invalid PrintInfo string: \"%s\"", str.c_str());
       continue;
     }
 
@@ -1745,7 +1753,7 @@ void Kernel::InitPrintf(const std::vector<std::string>& printfInfoStrings) {
 
     // ensure that we have the correct number of tokens
     if (tokens.size() < end + 1 /*last token is the fmtString*/) {
-      LogPrintfWarning("Invalid PrintInfo string: \"%s\"", str.c_str());
+      ClPrint(amd::LOG_WARNING, amd::LOG_KERN, "Invalid PrintInfo string: \"%s\"", str.c_str());
       continue;
     }
 
@@ -1811,14 +1819,14 @@ void Kernel::InitPrintf(const std::vector<std::string>& printfInfoStrings) {
 // ================================================================================================
 #if defined(WITH_COMPILER_LIB)
 void Kernel::InitPrintf(const aclPrintfFmt* aclPrintf) {
-  PrintfInfo info;
   uint index = 0;
   for (; aclPrintf->struct_size != 0; aclPrintf++) {
     index = aclPrintf->ID;
     if (printf_.size() <= index) {
       printf_.resize(index + 1);
     }
-    std::string pfmt = aclPrintf->fmtStr;
+    PrintfInfo& info = printf_[index];
+    const std::string& pfmt = aclPrintf->fmtStr;
     bool need_nl = true;
     for (size_t pos = 0; pos < pfmt.size(); ++pos) {
       char symbol = pfmt[pos];
@@ -1869,8 +1877,6 @@ void Kernel::InitPrintf(const aclPrintfFmt* aclPrintf) {
     for (uint i = 0; i < aclPrintf->numSizes; i++, tmp_ptr++) {
       info.arguments_.push_back(*tmp_ptr);
     }
-    printf_[index] = info;
-    info.arguments_.clear();
   }
 }
 #endif // defined(WITH_COMPILER_LIB)
