@@ -344,7 +344,7 @@ class Device : public NullDevice {
 
   virtual void hostFree(void* ptr, size_t size = 0) const;
 
-  void* deviceLocalAlloc(size_t size) const;
+  void* deviceLocalAlloc(size_t size, bool atomics = false) const;
 
   void memFree(void* ptr, size_t size) const;
 
@@ -410,6 +410,23 @@ class Device : public NullDevice {
 
   hsa_amd_memory_pool_t SystemCoarseSegment() const { return system_coarse_segment_; }
 
+  //! Acquire HSA queue. This method can create a new HSA queue or
+  //! share previously created
+  hsa_queue_t* acquireQueue(uint32_t queue_size_hint);
+
+  //! Release HSA queue
+  void releaseQueue(hsa_queue_t*);
+
+  //! For the given HSA queue, return an existing hostcall buffer or create a
+  //! new one. queuePool_ keeps a mapping from HSA queue to hostcall buffer.
+  void* getOrCreateHostcallBuffer(hsa_queue_t* queue);
+
+  //! Return multi GPU grid launch sync buffer
+  address MGSync() const { return mg_sync_; }
+
+  virtual bool findLinkTypeAndHopCount(amd::Device* other_device, uint32_t* link_type,
+                                       uint32_t* hop_count);
+
  private:
   static hsa_ven_amd_loader_1_00_pfn_t amd_loader_ext_table;
 
@@ -427,6 +444,7 @@ class Device : public NullDevice {
   hsa_amd_memory_pool_t system_segment_;
   hsa_amd_memory_pool_t system_coarse_segment_;
   hsa_amd_memory_pool_t gpuvm_segment_;
+  hsa_amd_memory_pool_t gpu_fine_grained_segment_;
   size_t gpuvm_segment_max_alloc_;
   size_t alloc_granularity_;
   static const bool offlineDevice_;
@@ -440,17 +458,16 @@ class Device : public NullDevice {
   std::atomic<size_t> freeMem_;   //!< Total of free memory available
   mutable amd::Monitor vgpusAccess_;     //!< Lock to serialise virtual gpu list access
   bool hsa_exclusive_gpu_access_;  //!< TRUE if current device was moved into exclusive GPU access mode
+  static address mg_sync_;  //!< MGPU grid launch sync memory (SVM location)
 
   struct QueueInfo {
     int refCount;
+    void* hostcallBuffer_;
   };
   std::map<hsa_queue_t*, QueueInfo> queuePool_;  //!< Pool of HSA queues for recycling
 
  public:
   amd::Atomic<uint> numOfVgpus_;  //!< Virtual gpu unique index
-
-  hsa_queue_t *acquireQueue(uint32_t queue_size_hint);
-  void releaseQueue(hsa_queue_t*);
 };                                // class roc::Device
 }  // namespace roc
 

@@ -19,8 +19,7 @@ namespace amd {
 
 HostQueue::HostQueue(Context& context, Device& device, cl_command_queue_properties properties,
                      uint queueRTCUs, Priority priority)
-    : CommandQueue(context, device, properties,
-                   device.info().queueProperties_ | CL_QUEUE_COMMAND_INTERCEPT_ENABLE_AMD,
+    : CommandQueue(context, device, properties, device.info().queueProperties_,
                    queueRTCUs, priority),
       lastEnqueueCommand_(nullptr) {
   if (thread_.state() >= Thread::INITIALIZED) {
@@ -76,17 +75,14 @@ void HostQueue::finish() {
   if (command == NULL) {
     return;
   }
-
+  ClPrint(LOG_DEBUG, LOG_CMD, "marker is queued");
   command->enqueue();
   command->awaitCompletion();
   command->release();
+  ClPrint(LOG_DEBUG, LOG_CMD, "All commands finished");
 }
 
 void HostQueue::loop(device::VirtualDevice* virtualDevice) {
-  cl_int(CL_CALLBACK * commandIntercept)(cl_event, cl_int*) =
-      properties().test(CL_QUEUE_COMMAND_INTERCEPT_ENABLE_AMD) ? context().info().commandIntercept_
-                                                               : NULL;
-
   // Notify the caller that the queue is ready to accept commands.
   {
     ScopedLock sl(queueLock_);
@@ -137,21 +133,15 @@ void HostQueue::loop(device::VirtualDevice* virtualDevice) {
       continue;
     }
 
-    command->setStatus(CL_SUBMITTED);
+    ClPrint(LOG_DEBUG, LOG_CMD, "command is submitted: %p", command);
 
-    cl_int result;
-    if ((commandIntercept != NULL) && commandIntercept(as_cl<Event>(command), &result)) {
-      // The command was handled by the callback.
-      command->setStatus(CL_RUNNING, command->profilingInfo().submitted_);
-      command->setStatus(result);
-      continue;
-    }
+    command->setStatus(CL_SUBMITTED);
 
     // Submit to the device queue.
     command->submit(*virtualDevice);
 
-    // if we are in intercept mode or this is a user invisible marker command
-    if ((0 == command->type()) || (commandIntercept != NULL)) {
+    // if this is a user invisible marker command, then flush
+    if (0 == command->type()) {
       virtualDevice->flush(head);
       tail = head = NULL;
     }

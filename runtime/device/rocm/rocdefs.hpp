@@ -43,8 +43,11 @@ const HsaDeviceId HSA_VEGA10_HBCC_ID = 10;
 const HsaDeviceId HSA_RAVEN_ID = 11;
 const HsaDeviceId HSA_VEGA12_ID = 12;
 const HsaDeviceId HSA_VEGA20_ID = 13;
-const HsaDeviceId HSA_GFX1010_ID = 15;
-const HsaDeviceId HSA_GFX908_ID = 16;
+const HsaDeviceId HSA_ARIEL_ID = 14;
+const HsaDeviceId HSA_NAVI10_ID = 15;
+const HsaDeviceId HSA_MI100_ID = 16;
+const HsaDeviceId HSA_NAVI12_ID = 17;
+const HsaDeviceId HSA_NAVI14_ID = 18;
 const HsaDeviceId HSA_INVALID_DEVICE_ID = -1;
 
 static const AMDDeviceInfo DeviceInfo[] = {
@@ -69,8 +72,12 @@ static const AMDDeviceInfo DeviceInfo[] = {
     /* TARGET RAVEN */ {HSA_RAVEN_ID, "", "gfx902", "gfx902", "gfx902", 4, 16, 1, 256, 64 * Ki, 32, 0, 0},
     /* TARGET VEGA12 */ {HSA_VEGA12_ID, "", "gfx904", "gfx904", "gfx904", 4, 16, 1, 256, 64 * Ki, 32, 0, 0},
     /* TARGET VEGA20 */ {HSA_VEGA20_ID, "", "gfx906", "gfx906", "gfx906", 4, 16, 1, 256, 64 * Ki, 32, 0, 0},
-    /* TARGET GFX1010 */ {HSA_GFX1010_ID, "", "gfx1010", "gfx1010", "gfx1010", 2, 32, 1, 256, 64 * Ki, 32, 0, 0},
-    /* TARGET GFX908 */ {HSA_GFX908_ID, "", "gfx908", "gfx908", "gfx908", 4, 16, 1, 256, 64 * Ki, 32, 0, 0}};
+    /* TARGET ARIEL */ {HSA_ARIEL_ID, "", "gfx1000", "gfx1000", "gfx1000", 2, 32, 1, 256, 64 * Ki, 32, 0, 0},
+    /* TARGET NAVI10 */ {HSA_NAVI10_ID, "", "gfx1010", "gfx1010", "gfx1010", 2, 32, 1, 256, 64 * Ki, 32, 0, 0},
+    /* TARGET MI100 */ {HSA_MI100_ID, "", "gfx908", "gfx908", "gfx908", 4, 16, 1, 256, 64 * Ki, 32, 0, 0},
+    /* TARGET NAVI12 */ {HSA_NAVI12_ID, "", "gfx1011", "gfx1011", "gfx1011", 2, 32, 1, 256, 64 * Ki, 32, 0, 0},
+    /* TARGET NAVI14 */ {HSA_NAVI14_ID, "", "gfx1012", "gfx1012", "gfx1012", 2, 32, 1, 256, 64 * Ki, 32, 0, 0}
+};
 }
 
 const uint kMaxAsyncQueues = 8;   // set to match the number of pipes, which is 8

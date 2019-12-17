@@ -96,6 +96,8 @@ bool Event::setStatus(cl_int status, uint64_t timeStamp) {
   }
 
   if (status <= CL_COMPLETE) {
+    ClPrint(LOG_DEBUG, LOG_CMD, "command %p complete", &command());
+
     // Before we notify the waiters that this event reached the CL_COMPLETE
     // status, we release all the resources associated with this instance.
     releaseResources();
@@ -160,12 +162,16 @@ bool Event::awaitCompletion() {
       return false;
     }
 
+    ClPrint(LOG_DEBUG, LOG_WAIT, "waiting for event %p to complete, current status %d", this, status_);
+
     ScopedLock lock(lock_);
 
     // Wait until the status becomes CL_COMPLETE or negative.
     while (status_ > CL_COMPLETE) {
       lock_.wait();
     }
+
+    ClPrint(LOG_DEBUG, LOG_WAIT, "event %p wait completed", this);
   }
 
   return status_ == CL_COMPLETE;
@@ -180,6 +186,7 @@ bool Event::notifyCmdQueue() {
       notified_.clear();
       return false;
     }
+    ClPrint(LOG_DEBUG, LOG_CMD, "queue marker to command queue: %p", queue);
     command->enqueue();
     command->release();
   }
@@ -220,6 +227,7 @@ void Command::enqueue() {
   if (IS_HIP) {
     queue_->setLastQueuedCommand(this);
   }
+  ClPrint(LOG_DEBUG, LOG_CMD, "command is enqueued: %p", this);
   queue_->append(*this);
   queue_->flush();
   if ((queue_->device().settings().waitCommand_ && (type_ != 0)) ||
@@ -232,12 +240,19 @@ const Context& Command::context() const { return queue_->context(); }
 
 NDRangeKernelCommand::NDRangeKernelCommand(HostQueue& queue, const EventWaitList& eventWaitList,
                                            Kernel& kernel, const NDRangeContainer& sizes,
-                                           uint32_t sharedMemBytes, uint32_t extraParam)
-    : Command(queue, CL_COMMAND_NDRANGE_KERNEL, eventWaitList, AMD_SERIALIZE_KERNEL)
-    , kernel_(kernel)
-    , sizes_(sizes)
-    , sharedMemBytes_(sharedMemBytes)
-    , extraParam_(extraParam) {
+                                           uint32_t sharedMemBytes, uint32_t extraParam,
+                                           uint32_t gridId, uint32_t numGrids,
+                                           uint64_t prevGridSum, uint64_t allGridSum, uint32_t firstDevice) :
+    Command(queue, CL_COMMAND_NDRANGE_KERNEL, eventWaitList, AMD_SERIALIZE_KERNEL),
+    kernel_(kernel),
+    sizes_(sizes),
+    sharedMemBytes_(sharedMemBytes),
+    extraParam_(extraParam),
+    gridId_(gridId),
+    numGrids_(numGrids),
+    prevGridSum_(prevGridSum),
+    allGridSum_(allGridSum),
+    firstDevice_(firstDevice) {
   auto& device = queue.device();
   auto devKernel = const_cast<device::Kernel*>(kernel.getDeviceKernel(device));
   profilingInfo_.setCallback(devKernel->getProfilingCallback(
