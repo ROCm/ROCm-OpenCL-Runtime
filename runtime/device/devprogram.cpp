@@ -21,6 +21,7 @@
 #endif
 #endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -82,7 +83,7 @@ Program::Program(amd::Device& device, amd::Program& owner)
       machineTarget_(nullptr),
       globalVariableTotalSize_(0),
       programOptions_(nullptr),
-      metadata_(nullptr)
+      metadata_{0}
 {
   memset(&binOpts_, 0, sizeof(binOpts_));
   binOpts_.struct_size = sizeof(binOpts_);
@@ -101,12 +102,16 @@ Program::~Program() {
     (*it)->release();
   }
 
+  if (isLC()) {
 #if defined(USE_COMGR_LIBRARY)
-  for (auto const& kernelMeta : kernelMetadataMap_) {
-    amd::Comgr::destroy_metadata(kernelMeta.second);
-  }
+    for (auto const& kernelMeta : kernelMetadataMap_) {
+      amd::Comgr::destroy_metadata(kernelMeta.second);
+    }
+    amd::Comgr::destroy_metadata(metadata_);
+#else
+    delete metadata_;
 #endif
-  delete metadata_;
+  }
 }
 
 // ================================================================================================
@@ -206,7 +211,7 @@ void Program::extractBuildLog(amd_comgr_data_set_t dataSet) {
     size_t logSize;
     status = extractByteCodeBinary(dataSet, AMD_COMGR_DATA_KIND_LOG, "", &logData, &logSize);
     buildLog_ += logData;
-    free(logData);
+    delete[] logData;
   }
   if (status != AMD_COMGR_STATUS_SUCCESS) {
     buildLog_ += "Warning: extracting build log failed.\n";
@@ -223,11 +228,7 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
                                                   char* outBinary[], size_t* outSize) {
   amd_comgr_data_t  binaryData;
 
-  amd_comgr_status_t status = amd::Comgr::create_data(dataKind, &binaryData);
-
-  if (status == AMD_COMGR_STATUS_SUCCESS) {
-    status = amd::Comgr::action_data_get_data(inDataSet, dataKind, 0, &binaryData);
-  }
+  amd_comgr_status_t status = amd::Comgr::action_data_get_data(inDataSet, dataKind, 0, &binaryData);
 
   size_t binarySize = 0;
   if (status == AMD_COMGR_STATUS_SUCCESS) {
@@ -236,7 +237,7 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
 
   size_t bufSize = (dataKind == AMD_COMGR_DATA_KIND_LOG) ? binarySize + 1 : binarySize;
 
-  char* binary = static_cast<char *>(malloc(bufSize));
+  char* binary = new char[bufSize];
   if (binary == nullptr) {
     amd::Comgr::release_data(binaryData);
     return AMD_COMGR_STATUS_ERROR;
@@ -253,7 +254,7 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
   amd::Comgr::release_data(binaryData);
 
   if (status != AMD_COMGR_STATUS_SUCCESS) {
-    free(binary);
+    delete[] binary;
     return status;
   }
 
@@ -274,7 +275,7 @@ amd_comgr_status_t Program::extractByteCodeBinary(const amd_comgr_data_set_t inD
     *outSize = binarySize;
   }
   else {
-    free(binary);
+    delete[] binary;
   }
   return AMD_COMGR_STATUS_SUCCESS;
 }
@@ -308,30 +309,34 @@ amd_comgr_status_t Program::addCodeObjData(const char *source,
   return status;
 }
 
-void Program::setLangAndTargetStr(const char* clStd, amd_comgr_language_t* oclver,
+void Program::setLangAndTargetStr(const char* clStd, amd_comgr_language_t* langver,
                                   std::string& targetIdent) {
 
-  uint clcStd = (clStd[2] - '0') * 100 + (clStd[4] - '0') * 10;
+  if (isHIP()) {
+    if (langver != nullptr) {
+      *langver = AMD_COMGR_LANGUAGE_HIP;
+    }
+  } else {
+    uint clcStd = (clStd[2] - '0') * 100 + (clStd[4] - '0') * 10;
 
-  if (oclver != nullptr) {
-    switch (clcStd) {
-      case 100:
-      case 110:
-      case 120:
-        *oclver = AMD_COMGR_LANGUAGE_OPENCL_1_2;
-        break;
-      case 200:
-        *oclver = AMD_COMGR_LANGUAGE_OPENCL_2_0;
-        break;
-      default:
-        *oclver = AMD_COMGR_LANGUAGE_NONE;
-        break;
+    if (langver != nullptr) {
+      switch (clcStd) {
+        case 100:
+        case 110:
+        case 120:
+          *langver = AMD_COMGR_LANGUAGE_OPENCL_1_2;
+          break;
+        case 200:
+          *langver = AMD_COMGR_LANGUAGE_OPENCL_2_0;
+          break;
+        default:
+          *langver = AMD_COMGR_LANGUAGE_NONE;
+          break;
+      }
     }
   }
-
   // Set target triple and CPU
   targetIdent = std::string("amdgcn-amd-amdhsa--") + machineTarget_;
-
   // Set xnack option if needed
   if (xnackEnabled_) {
     targetIdent.append("+xnack");
@@ -385,9 +390,9 @@ bool Program::linkLLVMBitcode(const amd_comgr_data_set_t inputs,
 
   // get the language and target name
   std::string targetIdent;
-  amd_comgr_language_t oclver;
-  setLangAndTargetStr(amdOptions->oVariables->CLStd, &oclver, targetIdent);
-  if (oclver == AMD_COMGR_LANGUAGE_NONE) {
+  amd_comgr_language_t langver;
+  setLangAndTargetStr(amdOptions->oVariables->CLStd, &langver, targetIdent);
+  if (langver == AMD_COMGR_LANGUAGE_NONE) {
     return false;
   }
 
@@ -397,7 +402,7 @@ bool Program::linkLLVMBitcode(const amd_comgr_data_set_t inputs,
   bool hasAction = false;
   bool hasDataSetDevLibs = false;
 
-  amd_comgr_status_t status = createAction(oclver, targetIdent, options, &action, &hasAction);
+  amd_comgr_status_t status = createAction(langver, targetIdent, options, &action, &hasAction);
 
   if (status == AMD_COMGR_STATUS_SUCCESS) {
     status = amd::Comgr::create_data_set(&dataSetDevLibs);
@@ -436,15 +441,15 @@ bool Program::linkLLVMBitcode(const amd_comgr_data_set_t inputs,
   return (status == AMD_COMGR_STATUS_SUCCESS);
 }
 
-bool Program::compileToLLVMBitcode(const amd_comgr_data_set_t inputs,
+bool Program::compileToLLVMBitcode(const amd_comgr_data_set_t compileInputs,
                                    const std::vector<std::string>& options, amd::option::Options* amdOptions,
                                    char* binaryData[], size_t* binarySize) {
 
   //  get the lanuage and target name
   std::string targetIdent;
-  amd_comgr_language_t oclver;
-  setLangAndTargetStr(amdOptions->oVariables->CLStd, &oclver, targetIdent);
-  if (oclver == AMD_COMGR_LANGUAGE_NONE) {
+  amd_comgr_language_t langver;
+  setLangAndTargetStr(amdOptions->oVariables->CLStd, &langver, targetIdent);
+  if (langver == AMD_COMGR_LANGUAGE_NONE) {
     return false;
   }
 
@@ -452,11 +457,13 @@ bool Program::compileToLLVMBitcode(const amd_comgr_data_set_t inputs,
   amd_comgr_action_info_t action;
   amd_comgr_data_set_t output;
   amd_comgr_data_set_t dataSetPCH;
+  amd_comgr_data_set_t input = compileInputs ;
+
   bool hasAction = false;
   bool hasOutput = false;
   bool hasDataSetPCH = false;
 
-  amd_comgr_status_t status = createAction(oclver, targetIdent, options, &action, &hasAction);
+  amd_comgr_status_t status = createAction(langver, targetIdent, options, &action, &hasAction);
 
   if (status == AMD_COMGR_STATUS_SUCCESS) {
     status = amd::Comgr::create_data_set(&output);
@@ -484,7 +491,7 @@ bool Program::compileToLLVMBitcode(const amd_comgr_data_set_t inputs,
       if (status == AMD_COMGR_STATUS_SUCCESS) {
         hasDataSetPreprocessor = true;
         status = amd::Comgr::do_action(AMD_COMGR_ACTION_SOURCE_TO_PREPROCESSOR,
-                                       action, inputs, dataSetPreprocessor);
+                                       action, input, dataSetPreprocessor);
         extractBuildLog(dataSetPreprocessor);
       }
 
@@ -500,16 +507,21 @@ bool Program::compileToLLVMBitcode(const amd_comgr_data_set_t inputs,
     }
   }
 
-  if (status == AMD_COMGR_STATUS_SUCCESS) {
-    status = amd::Comgr::do_action(AMD_COMGR_ACTION_ADD_PRECOMPILED_HEADERS,
-                                   action, inputs, dataSetPCH);
-    extractBuildLog(dataSetPCH);
+  if (!isHIP()) {
+    if (status == AMD_COMGR_STATUS_SUCCESS) {
+      status = amd::Comgr::do_action(AMD_COMGR_ACTION_ADD_PRECOMPILED_HEADERS,
+                                     action, input, dataSetPCH);
+      extractBuildLog(dataSetPCH);
+    }
+
+    // Set input for the next stage
+    input = dataSetPCH;
   }
 
-  //  Compiling the source codes with precompiled headers
+  //  Compiling the source codes with precompiled headers or directly compileInputs
   if (status == AMD_COMGR_STATUS_SUCCESS) {
     status = amd::Comgr::do_action(AMD_COMGR_ACTION_COMPILE_SOURCE_TO_BC,
-                                 action, dataSetPCH, output);
+                                 action, input, output);
     extractBuildLog(output);
   }
 
@@ -659,23 +671,25 @@ bool Program::compileImplLC(const std::string& sourceCode,
   }
 
   if (addCodeObjData(sourceCode.c_str(), sourceCode.length(), AMD_COMGR_DATA_KIND_SOURCE,
-                     "CompileCLSource", &inputs) != AMD_COMGR_STATUS_SUCCESS) {
-    buildLog_ += "Error: COMGR fails to create data from CL source.\n";
+                     "CompileSource", &inputs) != AMD_COMGR_STATUS_SUCCESS) {
+    buildLog_ += "Error: COMGR fails to create data from source.\n";
     amd::Comgr::destroy_data_set(inputs);
     return false;
   }
 
-  std::vector<std::string> driverOptions(options->clangOptions);
-
+  std::vector<std::string> driverOptions;
   // Set the -O#
   std::ostringstream optLevel;
   optLevel << "-O" << options->oVariables->OptLevel;
   driverOptions.push_back(optLevel.str());
 
-  // TODO: Can this be fixed at the source? options->llvmOptions is a flat
-  // string, but should really be a vector of strings.
-  std::vector<std::string> splitLlvmOptions = splitSpaceSeparatedString(options->llvmOptions.c_str());
-  driverOptions.insert(driverOptions.end(), splitLlvmOptions.begin(), splitLlvmOptions.end());
+  if(!isHIP()) {
+    driverOptions.insert(driverOptions.end(), options->clangOptions.begin(), options->clangOptions.end());
+    // TODO: Can this be fixed at the source? options->llvmOptions is a flat
+    // string, but should really be a vector of strings.
+    std::vector<std::string> splitLlvmOptions = splitSpaceSeparatedString(options->llvmOptions.c_str());
+    driverOptions.insert(driverOptions.end(), splitLlvmOptions.begin(), splitLlvmOptions.end());
+  }
 
   std::vector<std::string> processedOptions = ProcessOptions(options);
   driverOptions.insert(driverOptions.end(), processedOptions.begin(), processedOptions.end());
@@ -718,7 +732,7 @@ bool Program::compileImplLC(const std::string& sourceCode,
     }
   }
 
-  if (options->isDumpFlagSet(amd::option::DUMP_CL)) {
+  if (!isHIP() && options->isDumpFlagSet(amd::option::DUMP_CL)) {
     std::ostringstream driverOptionsOStrStr;
     std::copy(driverOptions.begin(), driverOptions.end(),
       std::ostream_iterator<std::string>(driverOptionsOStrStr, " "));
@@ -742,6 +756,9 @@ bool Program::compileImplLC(const std::string& sourceCode,
   bool ret = compileToLLVMBitcode(inputs, driverOptions, options, &binaryData, &binarySize);
   if (ret) {
     llvmBinary_.assign(binaryData, binarySize);
+    // Destroy the original LLVM binary, received after compilation
+    delete[] binaryData;
+
     elfSectionType_ = amd::OclElf::LLVMIR;
 
     if (clBinary()->saveSOURCE()) {
@@ -755,7 +772,7 @@ bool Program::compileImplLC(const std::string& sourceCode,
     }
   }
   else {
-    buildLog_ += "Error: Failed to compile opencl source (from CL to LLVM IR).\n";
+    buildLog_ += "Error: Failed to compile opencl source (from CL or HIP source to LLVM IR).\n";
   }
 
   amd::Comgr::destroy_data_set(inputs);
@@ -1165,6 +1182,10 @@ bool Program::linkImplLC(const std::vector<Program*>& inputPrograms,
   }
 
   llvmBinary_.assign(binaryData, binarySize);
+
+  // Destroy llvm binary, received after compilation
+  delete[] binaryData;
+
   elfSectionType_ = amd::OclElf::LLVMIR;
 
   if (clBinary()->saveLLVMIR()) {
@@ -1391,7 +1412,7 @@ static void dumpCodeObject(const std::string& image) {
     char fname[30];
     static std::atomic<int> index;
     sprintf(fname, "_code_object%04d.o", index++);
-    LogPrintfInfo("Code object saved in %s\n", fname);
+    ClPrint(amd::LOG_INFO, amd::LOG_CODE, "Code object saved in %s\n", fname);
     std::ofstream ofs;
     ofs.open(fname, std::ios::binary);
     ofs << image;
@@ -1561,12 +1582,17 @@ bool Program::linkImplLC(amd::option::Options* options) {
     return false;
   }
 
-  if (!setKernels(options, executable, executableSize)) {
+  // Save the binary and type
+  clBinary()->saveBIFBinary(executable, executableSize);
+
+  // Destroy original memory with executable after compilation
+  delete[] executable;
+
+  if (!setKernels(options,  const_cast<void*>(clBinary()->data().first),
+                  clBinary()->data().second)) {
     return false;
   }
 
-  // Save the binary and type
-  clBinary()->saveBIFBinary(reinterpret_cast<const char*>(executable), executableSize);
   setType(TYPE_EXECUTABLE);
 
   return true;
@@ -2294,20 +2320,7 @@ std::vector<std::string> Program::ProcessOptions(amd::option::Options* options) 
 
     scratchStr.clear();
     optionsVec.push_back(scratchStr.append("-D__").append(machineTarget_).append("=1"));
-  } else {
-    int major, minor;
-    ::sscanf(device().info().version_, "OpenCL %d.%d ", &major, &minor);
 
-    std::stringstream ss;
-    ss << "-D__OPENCL_VERSION__=" << (major * 100 + minor * 10);
-    optionsVec.push_back(ss.str());
-  }
-
-  if (device().info().imageSupport_ && options->oVariables->ImageSupport) {
-    optionsVec.push_back("-D__IMAGE_SUPPORT__=1");
-  }
-
-  if (!isLC()) {
     // Set options for the standard device specific options
     // All our devices support these options now
     if (device().settings().reportFMAF_) {
@@ -2316,56 +2329,82 @@ std::vector<std::string> Program::ProcessOptions(amd::option::Options* options) 
     if (device().settings().reportFMA_) {
       optionsVec.push_back("-DFP_FAST_FMA=1");
     }
-  }
-
-  uint clcStd =
-    (options->oVariables->CLStd[2] - '0') * 100 + (options->oVariables->CLStd[4] - '0') * 10;
-
-  if (clcStd >= 200) {
-    std::stringstream opts;
-    // Add only for CL2.0 and later
-    opts << "-D"
-      << "CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE=" << device().info().maxGlobalVariableSize_;
-    optionsVec.push_back(opts.str());
-  }
-
-  if (!device().settings().useLightning_) {
-    if (!device().settings().singleFpDenorm_) {
-      optionsVec.push_back("-cl-denorms-are-zero");
-    }
-
-    // Check if the host is 64 bit or 32 bit
-    LP64_ONLY(optionsVec.push_back("-m64"));
-  }
-
-  // Tokenize the extensions string into a vector of strings
-  std::istringstream istrstr(device().info().extensions_);
-  std::istream_iterator<std::string> sit(istrstr), end;
-  std::vector<std::string> extensions(sit, end);
-
-  if (isLC()) {
-    // FIXME_lmoriche: opencl-c.h defines 'cl_khr_depth_images', so
-    // remove it from the command line. Should we fix opencl-c.h?
-    auto found = std::find(extensions.begin(), extensions.end(), "cl_khr_depth_images");
-    if (found != extensions.end()) {
-      extensions.erase(found);
-    }
-
-    if (!extensions.empty()) {
-      std::ostringstream clext;
-
-      clext << "-cl-ext=+";
-      std::copy(extensions.begin(), extensions.end() - 1,
-        std::ostream_iterator<std::string>(clext, ",+"));
-      clext << extensions.back();
-
-      optionsVec.push_back("-Xclang");
-      optionsVec.push_back(clext.str());
-    }
   } else {
-    for (auto e : extensions) {
+    int major, minor;
+    ::sscanf(device().info().version_, "OpenCL %d.%d ", &major, &minor);
+
+    // FIXME: HIP MINOR/MANJOR needs to be defined
+    if (isHIP()) {
       scratchStr.clear();
-      optionsVec.push_back(scratchStr.append("-D").append(e).append("=1"));
+      optionsVec.push_back(scratchStr.append("-DHIP_VERSION_MAJOR=").append(std::to_string(major * 100)));
+      scratchStr.clear();
+      optionsVec.push_back(scratchStr.append("-DHIP_VERSION_MINOR=").append(std::to_string(minor * 10)));
+      optionsVec.push_back("-DHIP_VERSION_PATCH=19245");
+      scratchStr.clear();
+      std::string target(machineTarget_);
+      std::transform(target.begin(), target.end(), target.begin(), ::toupper);
+      optionsVec.push_back(scratchStr.append("-D__HIP_ARCH_").append(target).append("__=1"));
+    } else {
+      std::stringstream ss;
+      ss << "-D__OPENCL_VERSION__=" << (major * 100 + minor * 10);
+      optionsVec.push_back(ss.str());
+    }
+  }
+
+  if (!isHIP()) {
+    if (device().info().imageSupport_ && options->oVariables->ImageSupport) {
+      optionsVec.push_back("-D__IMAGE_SUPPORT__=1");
+    }
+
+      uint clcStd =
+        (options->oVariables->CLStd[2] - '0') * 100 + (options->oVariables->CLStd[4] - '0') * 10;
+
+      if (clcStd >= 200) {
+        std::stringstream opts;
+        // Add only for CL2.0 and later
+        opts << "-D"
+          << "CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE=" << device().info().maxGlobalVariableSize_;
+        optionsVec.push_back(opts.str());
+      }
+
+    if (!device().settings().useLightning_) {
+      if (!device().settings().singleFpDenorm_) {
+        optionsVec.push_back("-cl-denorms-are-zero");
+      }
+
+      // Check if the host is 64 bit or 32 bit
+      LP64_ONLY(optionsVec.push_back("-m64"));
+    }
+
+    // Tokenize the extensions string into a vector of strings
+    std::istringstream istrstr(device().info().extensions_);
+    std::istream_iterator<std::string> sit(istrstr), end;
+    std::vector<std::string> extensions(sit, end);
+
+    if (isLC()) {
+      // FIXME_lmoriche: opencl-c.h defines 'cl_khr_depth_images', so
+      // remove it from the command line. Should we fix opencl-c.h?
+      auto found = std::find(extensions.begin(), extensions.end(), "cl_khr_depth_images");
+      if (found != extensions.end()) {
+        extensions.erase(found);
+      }
+
+      if (!extensions.empty()) {
+        std::ostringstream clext;
+
+        clext << "-cl-ext=+";
+        std::copy(extensions.begin(), extensions.end() - 1,
+          std::ostream_iterator<std::string>(clext, ",+"));
+        clext << extensions.back();
+
+        optionsVec.push_back("-Xclang");
+        optionsVec.push_back(clext.str());
+      }
+    } else {
+      for (auto e : extensions) {
+        scratchStr.clear();
+        optionsVec.push_back(scratchStr.append("-D").append(e).append("=1"));
+      }
     }
   }
 
@@ -2891,17 +2930,17 @@ bool Program::createKernelMetadataMap() {
   bool hasKernelMD = false;
   size_t size = 0;
 
-  status = amd::Comgr::metadata_lookup(*metadata_, "Kernels", &kernelsMD);
+  status = amd::Comgr::metadata_lookup(metadata_, "Kernels", &kernelsMD);
   if (status == AMD_COMGR_STATUS_SUCCESS) {
-    LogInfo("Using Code Object V2.");
+    ClPrint(amd::LOG_INFO, amd::LOG_CODE, "Using Code Object V2.");
     hasKernelMD = true;
     codeObjectVer_ = 2;
   }
   else {
-    status = amd::Comgr::metadata_lookup(*metadata_, "amdhsa.kernels", &kernelsMD);
+    status = amd::Comgr::metadata_lookup(metadata_, "amdhsa.kernels", &kernelsMD);
 
     if (status == AMD_COMGR_STATUS_SUCCESS) {
-      LogInfo("Using Code Object V3.");
+      ClPrint(amd::LOG_INFO, amd::LOG_CODE, "Using Code Object V3.");
       hasKernelMD = true;
       codeObjectVer_ = 3;
     }
@@ -2980,7 +3019,7 @@ bool Program::FindGlobalVarSize(void* binary, size_t binSize) {
     buildLog_ += "Error while reading the ELF program binary\n";
     return false;
   }
-
+  bool metadata_found = false;
   for (size_t i = 0; i < numpHdrs; ++i) {
     GElf_Phdr pHdr;
     if (gelf_getphdr(e, i, &pHdr) != &pHdr) {
@@ -3017,8 +3056,7 @@ bool Program::FindGlobalVarSize(void* binary, size_t binSize) {
           }
 
           if (status == AMD_COMGR_STATUS_SUCCESS) {
-            metadata_ = new amd_comgr_metadata_node_t;
-            status = amd::Comgr::get_data_metadata(binaryData, metadata_);
+            status = amd::Comgr::get_data_metadata(binaryData, &metadata_);
           }
 
           amd::Comgr::release_data(binaryData);
@@ -3037,6 +3075,7 @@ bool Program::FindGlobalVarSize(void* binary, size_t binSize) {
           // We've found and loaded the runtime metadata, exit the
           // note record loop now.
 #endif
+          metadata_found = true;
           break;
         }
         ptr += sizeof(*note) + amd::alignUp(note->n_namesz, sizeof(int)) +
@@ -3059,9 +3098,8 @@ bool Program::FindGlobalVarSize(void* binary, size_t binSize) {
 
   elf_end(e);
 
-  if (!metadata_) {
-    buildLog_ +=
-      "Error: runtime metadata section not present in ELF program binary\n";
+  if (!metadata_found) {
+    buildLog_ += "Error: runtime metadata section not present in ELF program binary\n";
     return false;
   }
 

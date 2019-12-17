@@ -98,6 +98,7 @@ class Program : public amd::HeapObject {
        uint32_t hasGlobalStores_ : 1; //!< Program has writable program scope variables
        uint32_t xnackEnabled_ : 1;    //!< Xnack was enabled during compilation
        uint32_t sramEccEnabled_ : 1;  //!< SRAM ECC was enabled during compilation
+       uint32_t isHIP_          : 1;  //!< Determine if the program is for HIP
      };
      uint32_t flags_;  //!< Program flags
    };
@@ -124,9 +125,9 @@ class Program : public amd::HeapObject {
 
 
 #if defined(USE_COMGR_LIBRARY)
-  amd_comgr_metadata_node_t* metadata_;   //!< COMgr metadata
+  amd_comgr_metadata_node_t metadata_;    //!< COMgr metadata
   uint32_t codeObjectVer_;                //!< version of code object
-  std::map<std::string,amd_comgr_metadata_node_t> kernelMetadataMap_; //!< Map of kernel metadata
+  std::map<std::string, amd_comgr_metadata_node_t> kernelMetadataMap_; //!< Map of kernel metadata
 #else
   CodeObjectMD* metadata_;  //!< Runtime metadata
 #endif
@@ -218,7 +219,7 @@ class Program : public amd::HeapObject {
   std::vector<amd::Memory*> getUndefMemObj() const { return undef_mem_obj_; }
 
 #if defined(USE_COMGR_LIBRARY)
-  const amd_comgr_metadata_node_t* metadata() const { return metadata_; }
+  amd_comgr_metadata_node_t metadata() const { return metadata_; }
 
   //! Get the kernel metadata
   const amd_comgr_metadata_node_t* getKernelMetadata(const std::string name) const {
@@ -239,6 +240,9 @@ class Program : public amd::HeapObject {
 
   //! Check if SRAM ECC is enable
   const bool sramEccEnable() const { return (sramEccEnabled_ == 1); }
+
+  //! Check if program is HIP based
+  const bool isHIP() const { return (isHIP_ == 1); }
 
   bool getGlobalVarFromCodeObj(std::vector<std::string>* var_names) const;
   bool getUndefinedVarFromCodeObj(std::vector<std::string>* var_names) const;
