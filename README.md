@@ -2,8 +2,7 @@
 
 Developer preview Version 2 of the new 
 
-* OpenCL 1.2 compatible language runtime and compiler
-* OpenCL 2.0 compatible kernel language support with OpenCL 1.2 compatible runtime
+* OpenCL 2.0 compatible language runtime
 * Supports offline ahead of time compilation today; during the Beta phase we will add in-process/in-memory compilation.
 
 
@@ -19,11 +18,6 @@ Repo is a git wrapper that manages a collection of git repositories. Install thi
 Main OpenCL™ Compatible Components:
 
 * https://github.com/RadeonOpenCompute/ROCm-OpenCL-Runtime
-* https://github.com/RadeonOpenCompute/ROCm-Device-Libs 
-* https://github.com/RadeonOpenCompute/ROCm-OpenCL-Driver 
-* https://github.com/RadeonOpenCompute/llvm 
-* https://github.com/RadeonOpenCompute/clang
-* https://github.com/RadeonOpenCompute/lld 
 * https://github.com/KhronosGroup/OpenCL-ICD-Loader
 
 Download the git projects with the following commands:
@@ -59,7 +53,7 @@ Use out-of-source CMake build and create separate directory to run CMake.
 The following build steps are performed:
 
     mkdir -p build && cd build
-    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_INCLUDES=<path-to-llvm-include> -Damd_comgr_DIR=<path-to-amd_comgr> -DUSE_COMGR_LIBRARY=yes ..
     make
     
 ## RUNNING clinfo
