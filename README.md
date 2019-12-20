@@ -53,7 +53,7 @@ Use out-of-source CMake build and create separate directory to run CMake.
 The following build steps are performed:
 
     mkdir -p build && cd build
-    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_INCLUDES=<path-to-llvm-include> -Damd_comgr_DIR=<path-to-amd_comgr> -DUSE_COMGR_LIBRARY=yes ..
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_INCLUDES=<path-to-llvm-include> -DCMAKE_PREFIX_PATH=<path-to-amd_comgr> -DUSE_COMGR_LIBRARY=yes ..
     make
     
 ## RUNNING clinfo
