@@ -14,14 +14,11 @@
 #include "thread/monitor.hpp"
 #include "CL/cl_ext.h"
 
-#include "amdocl/cl_common.hpp"
+#include "vdi_common.hpp"
 #include "device/rocm/rocdevice.hpp"
 #include "device/rocm/rocblit.hpp"
 #include "device/rocm/rocvirtual.hpp"
 #include "device/rocm/rocprogram.hpp"
-#if defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
-#include "driver/AmdCompiler.h"
-#endif  // defined(WITH_LIGHTNING_COMPILER) && ! defined(USE_COMGR_LIBRARY)
 #include "device/rocm/rocmemory.hpp"
 #include "device/rocm/rocglinterop.hpp"
 #ifdef WITH_AMDGPU_PRO
@@ -219,6 +216,8 @@ Device::~Device() {
     delete settings_;
     settings_ = nullptr;
   }
+
+  delete[] p2p_agents_list_;
 }
 bool NullDevice::initCompiler(bool isOffline) {
 #if defined(WITH_COMPILER_LIB)
@@ -657,44 +656,6 @@ bool Device::create(bool sramEccEnabled) {
     return false;
   }
 
-  const char* scheduler = nullptr;
-
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
-  std::string sch = SchedulerSourceCode;
-  if (settings().useLightning_) {
-    if (info().cooperativeGroups_) {
-      sch.append(GwsInitSourceCode);
-    }
-    scheduler = sch.c_str();
-  }
-#ifndef USE_COMGR_LIBRARY
-  //  create compilation object with cache support
-  int gfxipMajor = deviceInfo_.gfxipVersion_ / 100;
-  int gfxipMinor = deviceInfo_.gfxipVersion_ / 10 % 10;
-  int gfxipStepping = deviceInfo_.gfxipVersion_ % 10;
-
-  // Use compute capability as target (AMD:AMDGPU:major:minor:stepping)
-  // with dash as delimiter to be compatible with Windows directory name
-  std::ostringstream cacheTarget;
-  cacheTarget << "AMD-AMDGPU-" << gfxipMajor << "-" << gfxipMinor << "-" << gfxipStepping;
-  if (settings().enableXNACK_) {
-    cacheTarget << "+xnack";
-  }
-  if (info_.sramEccEnabled_) {
-    cacheTarget << "+sram-ecc";
-  }
-
-  amd::CacheCompilation* compObj = new amd::CacheCompilation(
-      cacheTarget.str(), "_rocm", OCL_CODE_CACHE_ENABLE, OCL_CODE_CACHE_RESET);
-  if (!compObj) {
-    LogError("Unable to create cache compilation object!");
-    return false;
-  }
-
-  cacheCompilation_.reset(compObj);
-#endif  // USE_COMGR_LIBRARY
-#endif
-
   amd::Context::Info info = {0};
   std::vector<amd::Device*> devices;
   devices.push_back(this);
@@ -702,15 +663,6 @@ bool Device::create(bool sramEccEnabled) {
   // Create a dummy context
   context_ = new amd::Context(devices, info);
   if (context_ == nullptr) {
-    return false;
-  }
-
-  blitProgram_ = new BlitProgram(context_);
-  // Create blit programs
-  if (blitProgram_ == nullptr || !blitProgram_->create(this, scheduler)) {
-    delete blitProgram_;
-    blitProgram_ = nullptr;
-    LogError("Couldn't create blit kernels!");
     return false;
   }
 
@@ -784,8 +736,6 @@ bool Device::create(bool sramEccEnabled) {
     }
   }
 
-  xferQueue();
-
   return true;
 }
 
@@ -834,6 +784,32 @@ void Device::ReleaseExclusiveGpuAccess(VirtualGPU& vgpu) const {
 
   // Unock the virtual GPU list
   vgpusAccess().unlock();
+}
+
+bool Device::createBlitProgram() {
+  bool result = true;
+  const char* scheduler = nullptr;
+
+#if defined(USE_COMGR_LIBRARY)
+  std::string sch = SchedulerSourceCode;
+  if (settings().useLightning_) {
+    if (info().cooperativeGroups_) {
+      sch.append(GwsInitSourceCode);
+    }
+    scheduler = sch.c_str();
+  }
+#endif  // USE_COMGR_LIBRARY
+
+  blitProgram_ = new BlitProgram(context_);
+  // Create blit programs
+  if (blitProgram_ == nullptr || !blitProgram_->create(this, scheduler)) {
+    delete blitProgram_;
+    blitProgram_ = nullptr;
+    LogError("Couldn't create blit kernels!");
+    return false;
+  }
+
+  return result;
 }
 
 device::Program* Device::createProgram(amd::Program& owner, amd::option::Options* options) {
@@ -993,6 +969,10 @@ Sampler::~Sampler() {
   hsa_ext_sampler_destroy(dev_.getBackendDevice(), hsa_sampler);
 }
 
+Memory* Device::getGpuMemory(amd::Memory* mem) const {
+  return static_cast<roc::Memory*>(mem->getDeviceMemory(*this));
+}
+
 bool Device::populateOCLDeviceConstants() {
   info_.available_ = true;
 
@@ -1101,6 +1081,13 @@ bool Device::populateOCLDeviceConstants() {
         p2p_agents_.push_back(agent);
       }
     }
+  }
+
+  /* Keep track of all P2P Agents in a Array including current device handle for IPC */
+  p2p_agents_list_ = new hsa_agent_t[1 + p2p_agents_.size()];
+  p2p_agents_list_[0] = getBackendDevice();
+  for (size_t agent_idx = 0; agent_idx < p2p_agents_.size(); ++agent_idx) {
+    p2p_agents_list_[1 + agent_idx] = p2p_agents_[agent_idx];
   }
 
   size_t group_segment_size = 0;
@@ -1747,11 +1734,12 @@ amd::Memory *Device::IpcAttach(const void* handle, size_t mem_size, unsigned int
   amd::Memory* amd_mem_obj = nullptr;
   hsa_status_t hsa_status = HSA_STATUS_SUCCESS;
 
+  /* FIX_ME (SWDEV-215976): Mapping for all devices is not optimal. In future map only for devices on need basis */
   /* Retrieve the devPtr from the handle */
   hsa_agent_t hsa_agent = getBackendDevice();
   hsa_status
     = hsa_amd_ipc_memory_attach(reinterpret_cast<const hsa_amd_ipc_memory_t*>(handle),
-                                mem_size, 1, &hsa_agent, dev_ptr);
+                                mem_size, (1 + p2p_agents_.size()), p2p_agents_list_, dev_ptr);
 
   if (hsa_status != HSA_STATUS_SUCCESS) {
     LogError("[OCL] HSA failed to attach IPC memory");

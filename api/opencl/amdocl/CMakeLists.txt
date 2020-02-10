@@ -22,6 +22,7 @@ if (DEFINED LLVM_INCLUDES AND NOT ${LLVM_INCLUDES} STREQUAL "")
 endif() # if (DEFINED LLVM_INCLUDES AND NOT ${LLVM_INCLUDES} STREQUAL "")
 
 include_directories(${CMAKE_SOURCE_DIR}/runtime)
+include_directories(${CMAKE_SOURCE_DIR}/runtime/include)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos)
 include_directories(${CMAKE_SOURCE_DIR}/api/opencl/khronos/headers)

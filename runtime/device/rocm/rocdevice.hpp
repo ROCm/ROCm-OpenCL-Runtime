@@ -380,6 +380,9 @@ class Device : public NullDevice {
 
   amd::Context& context() const { return *context_; }
 
+  //! Create internal blit program
+  bool createBlitProgram();
+
   // Returns AMD GPU Pro interfaces
   const IProDevice& iPro() const { return *pro_device_; }
   bool ProEna() const  { return pro_ena_; }
@@ -427,6 +430,9 @@ class Device : public NullDevice {
   virtual bool findLinkTypeAndHopCount(amd::Device* other_device, uint32_t* link_type,
                                        uint32_t* hop_count);
 
+  //! Returns a GPU memory object from AMD memory object
+  roc::Memory* getGpuMemory(amd::Memory* mem  //!< Pointer to AMD memory object
+                            ) const;
  private:
   static hsa_ven_amd_loader_1_00_pfn_t amd_loader_ext_table;
 
@@ -439,6 +445,7 @@ class Device : public NullDevice {
   static std::vector<hsa_agent_t> gpu_agents_;
   std::vector<hsa_agent_t> p2p_agents_;  //!< List of P2P agents available for this device
   hsa_agent_t _bkendDevice;
+  hsa_agent_t* p2p_agents_list_;
   hsa_profile_t agent_profile_;
   hsa_amd_memory_pool_t group_segment_;
   hsa_amd_memory_pool_t system_segment_;
