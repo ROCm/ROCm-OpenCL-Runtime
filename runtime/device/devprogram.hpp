@@ -9,31 +9,9 @@
 #include "platform/memory.hpp"
 #include "devwavelimiter.hpp"
 
-#if defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
-#ifndef USE_COMGR_LIBRARY
-#include "driver/AmdCompiler.h"
-#else
+#if defined(USE_COMGR_LIBRARY)
 #include "amd_comgr.h"
-#endif
-//#include "llvm/Support/AMDGPUMetadata.h"
-
-namespace llvm {
-  namespace AMDGPU {
-    namespace HSAMD {
-      struct Metadata;
-      namespace Kernel {
-        struct Metadata;
-}}}}
-
-#define LC_METADATA 1
-typedef llvm::AMDGPU::HSAMD::Metadata CodeObjectMD;
-typedef llvm::AMDGPU::HSAMD::Kernel::Metadata KernelMD;
-//typedef llvm::AMDGPU::HSAMD::Kernel::Arg::Metadata KernelArgMD;
-#endif  // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
-
-#ifndef LC_METADATA
-typedef char CodeObjectMD;
-#endif
+#endif  // defined(USE_COMGR_LIBRARY)
 
 namespace amd {
   namespace hsa {
@@ -65,6 +43,11 @@ class Kernel;
 struct SymbolInfo {
   int sym_type;
   std::vector<std::string>* var_names;
+};
+
+struct SymbolLoweredName {
+  const char* name_expression;
+  std::string* loweredName;
 };
 
 //! A program object for a specific device.
@@ -125,11 +108,9 @@ class Program : public amd::HeapObject {
 
 
 #if defined(USE_COMGR_LIBRARY)
-  amd_comgr_metadata_node_t metadata_;    //!< COMgr metadata
-  uint32_t codeObjectVer_;                //!< version of code object
+  amd_comgr_metadata_node_t metadata_ = {}; //!< COMgr metadata
+  uint32_t codeObjectVer_;                  //!< version of code object
   std::map<std::string, amd_comgr_metadata_node_t> kernelMetadataMap_; //!< Map of kernel metadata
-#else
-  CodeObjectMD* metadata_;  //!< Runtime metadata
 #endif
 
   std::vector<amd::Memory*> undef_mem_obj_;
@@ -228,8 +209,6 @@ class Program : public amd::HeapObject {
   }
 
   const uint32_t codeObjectVer() const { return codeObjectVer_; }
-#else
-  const CodeObjectMD* metadata() const { return metadata_; }
 #endif
 
   //! Get the machine target for the program
@@ -243,6 +222,9 @@ class Program : public amd::HeapObject {
 
   //! Check if program is HIP based
   const bool isHIP() const { return (isHIP_ == 1); }
+
+  //! Get mangled name of a name expresion
+  const bool getLoweredNames(std::vector<std::string>* mangledNames) const;
 
   bool getGlobalVarFromCodeObj(std::vector<std::string>* var_names) const;
   bool getUndefinedVarFromCodeObj(std::vector<std::string>* var_names) const;
@@ -310,11 +292,6 @@ class Program : public amd::HeapObject {
     const amd::option::Options* linkOptions);
 
   void setType(type_t newType) { type_ = newType; }
-
-#if defined(WITH_LIGHTNING_COMPILER) && !defined(USE_COMGR_LIBRARY)
-  //! Return a new transient compiler instance.
-  static std::unique_ptr<amd::opencl_driver::Compiler> newCompilerInstance();
-#endif // defined(WITH_LIGHTNING_COMPILER) || defined(USE_COMGR_LIBRARY)
 
   /* \brief Returns the next stage to compile from, based on sections in binary,
   *  also returns completeStages in a vector, which contains at least ACL_TYPE_DEFAULT,
