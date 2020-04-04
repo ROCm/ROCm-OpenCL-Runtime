@@ -89,7 +89,6 @@ endif()
 add_subdirectory(api/opencl/amdocl)
 add_subdirectory(compiler/lib/loaders/elf/utils/libelf)
 add_subdirectory(runtime)
-add_subdirectory(tools/clinfo)
 
 set(BUILD_SHARED_LIBS "Build shared libs" ON)
 add_subdirectory(api/opencl/khronos/icd)
