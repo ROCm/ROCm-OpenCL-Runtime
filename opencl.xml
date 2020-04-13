@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="RadeonOpenCompute" fetch="https://github.com/RadeonOpenCompute/"/>
+  <remote name="ROCm-Developer-Tools" fetch="https://github.com/ROCm-Developer-Tools/"/>
+
+  <project path="opencl" name="ROCm-OpenCL-Runtime" remote="RadeonOpenCompute" revision="refs/tags/hipclang-3.2.0" sync-c="true" sync-j="4"/>
+  <project path="vdi" name="ROCclr" remote="ROCm-Developer-Tools" revision="84775b87088c550b73b5dfb23353fffd680624d3" sync-c="true" sync-j="4"/>
+</manifest>
