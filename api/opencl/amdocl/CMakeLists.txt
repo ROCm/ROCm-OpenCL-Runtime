@@ -85,4 +85,4 @@ else()
 endif()
 
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/amdocl64.icd" CONTENT "$<TARGET_FILE_NAME:amdocl64>")
-install(FILES "${CMAKE_BINARY_DIR}/amdocl64.icd" DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/OpenCL/vendors/")
+install(FILES "${CMAKE_BINARY_DIR}/amdocl64.icd" DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/OpenCL/vendors/")
