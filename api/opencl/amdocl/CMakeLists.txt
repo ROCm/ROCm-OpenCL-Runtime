@@ -83,3 +83,6 @@ if(${USE_COMGR_LIBRARY} MATCHES "yes")
 else()
   target_link_libraries(amdocl64 opencl_driver oclelf pthread dl ${ROCT_LIBRARIES} ${ROCR_LIBRARIES})
 endif()
+
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/amdocl64.icd" CONTENT "$<TARGET_FILE_NAME:amdocl64>")
+install(FILES "${CMAKE_BINARY_DIR}/amdocl64.icd" DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/OpenCL/vendors/")
