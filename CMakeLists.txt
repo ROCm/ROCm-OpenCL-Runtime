@@ -10,10 +10,9 @@ project(opencl)
 #example command:
 #cmake -DROCclr_DIR=/rocclr -DUSE_COMGR_LIBRARY=yes -DLIBROCclr_STATIC_DIR=/build ..
 
-set(OPENCL_ICD_LOADER_HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/khronos/headers/opencl2.2" CACHE PATH "")
+find_package(OpenCL REQUIRED)
 set(BUILD_SHARED_LIBS "Build shared libs" ON)
 
-add_subdirectory(khronos/icd)
 add_subdirectory(amdocl)
 add_subdirectory(tools/clinfo)
 add_subdirectory(tools/cltrace)
@@ -39,9 +38,6 @@ set(OPENCL_VERSION_MAJOR "2")
 set(OPENCL_VERSION_MINOR "0")
 set(OPENCL_VERSION_PATCH ${OPENCL_VERSION_GITDATE})
 
-get_target_property(OPENCL_LIB_VERSION_MAJOR OpenCL SOVERSION)
-get_target_property(OPENCL_LIB_VERSION_STRING OpenCL VERSION)
-
 ###--- Packaging ------------------------------------------------------------###
 
 # MAIN package
@@ -54,25 +50,6 @@ install(PROGRAMS $<TARGET_FILE:cltrace>
 install(PROGRAMS $<TARGET_FILE:amdocl64>
         DESTINATION lib
         COMPONENT MAIN)
-install(PROGRAMS $<TARGET_FILE:OpenCL>
-        DESTINATION lib
-        COMPONENT MAIN)
-install(PROGRAMS $<TARGET_SONAME_FILE:OpenCL>
-        DESTINATION lib
-        COMPONENT MAIN)
-
-# DEV package
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/khronos/headers/opencl2.2/CL"
-        DESTINATION include
-        COMPONENT DEV
-        USE_SOURCE_PERMISSIONS
-        PATTERN cl_d3d10.h EXCLUDE
-        PATTERN cl_d3d11.h EXCLUDE
-        PATTERN cl_dx9_media_sharing.h EXCLUDE
-        PATTERN cl_egl.h EXCLUDE)
-install(PROGRAMS $<TARGET_LINKER_FILE:OpenCL>
-        DESTINATION lib
-        COMPONENT DEV)
 
 #############################
 # Packaging steps
@@ -98,7 +75,7 @@ add_custom_target(pkg_rocm_opencl COMMAND ${CMAKE_COMMAND} .
     COMMAND cp *.deb ${PROJECT_BINARY_DIR}
     COMMAND cp *.rpm ${PROJECT_BINARY_DIR}
     WORKING_DIRECTORY ${BUILD_DIR}
-    DEPENDS amdocl64 OpenCL)
+    DEPENDS amdocl64)
 
 # Package: rocm-opencl-dev
 set(BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/packages/rocm-opencl-dev)
@@ -109,7 +86,7 @@ add_custom_target(pkg_rocm_opencl_dev  COMMAND ${CMAKE_COMMAND} .
     COMMAND cp *.deb ${PROJECT_BINARY_DIR}
     COMMAND cp *.rpm ${PROJECT_BINARY_DIR}
     WORKING_DIRECTORY ${BUILD_DIR}
-    DEPENDS amdocl64 OpenCL)
+    DEPENDS amdocl64)
 
 # Package: all
 if(POLICY CMP0037)
