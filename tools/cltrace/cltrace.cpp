@@ -27,6 +27,10 @@
 #include <pthread.h>
 #endif
 
+/* cl_kernel_exec_info for DVR DOPP texture support */
+#define CL_KERNEL_EXEC_INFO_NEW_VCOP_AMD   0x4120
+#define CL_KERNEL_EXEC_INFO_PFPA_VCOP_AMD  0x4121
+
 #define CASE(x) case x: return #x;
 
 std::ofstream clTraceLog;

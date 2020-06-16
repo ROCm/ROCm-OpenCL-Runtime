@@ -40,9 +40,7 @@ if(NOT ROCclr_FOUND)
 endif()
 
 include_directories(${CMAKE_SOURCE_DIR})
-include_directories(${CMAKE_SOURCE_DIR}/khronos)
-include_directories(${CMAKE_SOURCE_DIR}/khronos/headers)
-include_directories(${CMAKE_SOURCE_DIR}/khronos/headers/opencl2.2)
+include_directories(${OpenCL_INCLUDE_DIRS})
 if(${USE_COMGR_LIBRARY} MATCHES "yes")
   add_definitions(-DUSE_COMGR_LIBRARY -DCOMGR_DYN_DLL)
   find_package(amd_comgr REQUIRED CONFIG
