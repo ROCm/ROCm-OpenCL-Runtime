@@ -85,7 +85,7 @@ if (WIN32)
         if(DEFINED ENV{WDKContentRoot})
             file(GLOB D3DKMT_HEADER "$ENV{WDKContentRoot}/Include/*/km/d3dkmthk.h")
         else()
-            file(GLOB D3DKMT_HEADER "$ENV{HOMEDRIVE}/Program Files */Windows Kits/10/Include/*/km/d3dkmthk.h")
+            file(GLOB D3DKMT_HEADER "$ENV{HOMEDRIVE}/Program Files */Windows Kits/10/Include/*/shared/d3dkmthk.h")
         endif()
 
         if(D3DKMT_HEADER)
