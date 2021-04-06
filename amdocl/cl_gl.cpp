@@ -753,15 +753,26 @@ RUNTIME_EXIT
 
 RUNTIME_ENTRY_RET(cl_event, clCreateEventFromGLsyncKHR,
                   (cl_context context, cl_GLsync clGLsync, cl_int* errcode_ret)) {
+  if (!is_valid(context)) {
+    *not_null(errcode_ret) = CL_INVALID_CONTEXT;
+    LogWarning("invalid parameter \"context\"");
+    return nullptr;
+  }
   // create event of fence sync type
   amd::ClGlEvent* clglEvent = new amd::ClGlEvent(*as_amd(context));
+  if (clglEvent == nullptr) {
+    *not_null(errcode_ret) = CL_OUT_OF_HOST_MEMORY;
+    LogWarning("Memory allocation of clglEvent object failed");
+    return nullptr;
+  }
   clglEvent->context().glenv()->glFlush_();
   // initially set the status of fence as queued
   clglEvent->setStatus(CL_SUBMITTED);
   // store GLsync id of the fence in event in order to associate them together
   clglEvent->setData(clGLsync);
-  amd::Event* evt = dynamic_cast<amd::Event*>(clglEvent);
+  amd::Event* evt = clglEvent;
   evt->retain();
+  *not_null(errcode_ret) = CL_SUCCESS;
   return as_cl(evt);
 }
 RUNTIME_EXIT
@@ -1952,10 +1963,17 @@ cl_int clEnqueueAcquireExtObjectsAMD(cl_command_queue command_queue, cl_uint num
   amd::HostQueue& hostQueue = *queue;
 
   if (cmd_type == CL_COMMAND_ACQUIRE_GL_OBJECTS) {
+    GLFunctions* gl_functions = hostQueue.context().glenv();
     // Verify context init'ed for interop
-    if (!hostQueue.context().glenv() || !hostQueue.context().glenv()->isAssociated()) {
+    if (!gl_functions || !gl_functions->isAssociated()) {
       LogWarning("\"amdContext\" is not created from GL context or share list");
       return CL_INVALID_CONTEXT;
+    }
+    // If the cl_khr_gl_event extension is supported, then the OpenCL implementation will ensure
+    // that any such pending OpenGL operations are complete for an OpenGL context bound
+    // to the same thread as the OpenCL context.
+    if (hostQueue.device().settings().checkExtension(ClKhrGlEvent)) {
+      gl_functions->WaitCurrentGlContext(hostQueue.context().info());
     }
   }
 
@@ -2071,6 +2089,21 @@ cl_int clEnqueueReleaseExtObjectsAMD(cl_command_queue command_queue, cl_uint num
     }
   }
 #endif  //_WIN32
+  // If the cl_khr_gl_event extension is supported, then the OpenCL implementation will ensure
+  // that any pending OpenCL operations are complete for an OpenGL context bound
+  // to the same thread as the OpenCL context.
+  if (cmd_type == CL_COMMAND_RELEASE_GL_OBJECTS) {
+    GLFunctions* gl_functions = hostQueue.context().glenv();
+    // Verify context init'ed for interop
+    if (!gl_functions || !gl_functions->isAssociated()) {
+      LogWarning("\"amdContext\" is not created from GL context or share list");
+      return CL_INVALID_CONTEXT;
+    }
+    if (hostQueue.device().settings().checkExtension(ClKhrGlEvent) &&
+        gl_functions->IsCurrentGlContext(hostQueue.context().info())) {
+      command->awaitCompletion();
+    }
+  }
 
   *not_null(event) = as_cl(&command->event());
 
@@ -2213,6 +2246,8 @@ GLFunctions::GLFunctions(HMODULE h, bool isEGL)
 
   if (isEGL_) {
     GetProcAddress_ = (PFN_xxxGetProcAddress)GETPROCADDRESS(h, "eglGetProcAddress");
+    eglGetCurrentContext_ = (PFN_eglGetCurrentContext)GETPROCADDRESS(h, "eglGetCurrentContext");
+    VERIFY_POINTER(eglGetCurrentContext_)
   } else {
     GetProcAddress_ = (PFN_xxxGetProcAddress)GETPROCADDRESS(h, API_GETPROCADDR);
   }
@@ -2286,6 +2321,12 @@ GLFunctions::~GLFunctions() {
     intDpy_ = NULL;
   }
 #endif  //!_WIN32
+}
+
+void GLFunctions::WaitCurrentGlContext(const amd::Context::Info& info) const {
+  if (IsCurrentGlContext(info)) {
+    glFinish_();
+  }
 }
 
 bool GLFunctions::init(intptr_t hdc, intptr_t hglrc) {
