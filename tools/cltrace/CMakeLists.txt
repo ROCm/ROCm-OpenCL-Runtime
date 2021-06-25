@@ -1,21 +1,15 @@
-if(CMAKE_BUILD_TYPE MATCHES "^Debug$")
-  add_definitions(-DDEBUG)
+add_library(cltrace SHARED cltrace.cpp)
+
+if(WIN32)
+  target_sources(cltrace PRIVATE cltrace.def)
+else()
+  target_link_libraries(cltrace PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_LIST_DIR}/cltrace.map")
+  set_target_properties(cltrace PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/cltrace.map")
 endif()
 
-set (CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_SHARED_LINKER_FLAGS "-Wl,-Bsymbolic -Wl,--unresolved-symbols=report-all -Wl,--version-script=${CMAKE_CURRENT_LIST_DIR}/cltrace.map")
+target_link_libraries(cltrace PRIVATE OpenCL amdocl)
 
-include_directories(${CMAKE_CURRENT_LIST_DIR}/../../)
-include_directories(${CMAKE_CURRENT_LIST_DIR}/../../khronos/headers/opencl2.2)
-
-# FIXME: Remove this
-include_directories(${ROCclr_DIR}/include)
-
-add_definitions(-DHAVE_CL2_HPP -DCL_TARGET_OPENCL_VERSION=220)
-
-add_library(cltrace SHARED cltrace.cpp cltrace.def)
-target_include_directories(cltrace
-  PRIVATE
-    $<TARGET_PROPERTY:amdrocclr_static,INTERFACE_INCLUDE_DIRECTORIES>)
-
-target_link_libraries(cltrace OpenCL)
+INSTALL(TARGETS cltrace
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
