@@ -128,7 +128,7 @@ target_include_directories (OpenCL PRIVATE ${CMAKE_CURRENT_BINARY_DIR} loader)
 target_link_libraries (OpenCL ${CMAKE_DL_LIBS})
 
 include (CTest)
-if (BUILD_TESTING)
+if (BUILD_TESTS)
     add_subdirectory (test)
 endif()
 
