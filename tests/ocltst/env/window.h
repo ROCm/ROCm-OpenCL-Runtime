@@ -18,26 +18,38 @@
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE. */
 
-#ifndef _OCLMODULE_H_
-#define _OCLMODULE_H_
+#ifndef _WINDOW_H_
+#define _WINDOW_H_
 
 #ifdef _WIN32
-#define OCLLCONV __cdecl
-#endif
-#ifdef __linux__
-#define OCLLCONV
-#endif
 
-class OCLTest;
+#include <gl\gl.h>
+#include <windows.h>
 
-//
-//  exported function pointer typedefs
-//
-typedef unsigned int(OCLLCONV *TestCountFuncPtr)(void);
-typedef const char *(OCLLCONV *TestNameFuncPtr)(unsigned int);
-typedef OCLTest *(OCLLCONV *CreateTestFuncPtr)(unsigned int);
-typedef void(OCLLCONV *DestroyTestFuncPtr)(OCLTest *);
-typedef unsigned int(OCLLCONV *TestVersionFuncPtr)(void);
-typedef const char *(OCLLCONV *TestLibNameFuncPtr)(void);
+class Window {
+ public:
+  typedef LRESULT (*WindowProc)(HWND hW, UINT uMsg, WPARAM wP, LPARAM lP);
 
-#endif  // _OCLMODULE_H_
+ public:
+  Window(const char* title, int x, int y, int width, int height,
+         unsigned int uiStyle);
+  ~Window();
+
+  void ConsumeEvents(void);
+  void ShowImage(unsigned int width, unsigned int height, float* data);
+
+ private:
+  static LRESULT WINAPI DefWindowProc(HWND hW, UINT uMsg, WPARAM wP, LPARAM lP);
+
+  static void OnPaint(void);
+
+ public:
+  static HWND _hWnd;
+  static unsigned char* _data;
+  static unsigned int _w;
+  static unsigned int _h;
+};
+
+#endif  // _WIN32
+
+#endif  // _WINDOW_H_

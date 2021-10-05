@@ -18,26 +18,31 @@
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE. */
 
-#ifndef _OCLMODULE_H_
-#define _OCLMODULE_H_
+#include "getopt.h"
 
-#ifdef _WIN32
-#define OCLLCONV __cdecl
-#endif
-#ifdef __linux__
-#define OCLLCONV
-#endif
+#include <string.h>
 
-class OCLTest;
+char *optarg = nullptr;
+int optind = 1;
 
-//
-//  exported function pointer typedefs
-//
-typedef unsigned int(OCLLCONV *TestCountFuncPtr)(void);
-typedef const char *(OCLLCONV *TestNameFuncPtr)(unsigned int);
-typedef OCLTest *(OCLLCONV *CreateTestFuncPtr)(unsigned int);
-typedef void(OCLLCONV *DestroyTestFuncPtr)(OCLTest *);
-typedef unsigned int(OCLLCONV *TestVersionFuncPtr)(void);
-typedef const char *(OCLLCONV *TestLibNameFuncPtr)(void);
+int getopt(int argc, char *const argv[], const char *optstring) {
+  if ((optind >= argc) || (argv[optind][0] != '-') || (argv[optind][0] == 0)) {
+    return -1;
+  }
 
-#endif  // _OCLMODULE_H_
+  int opt = argv[optind][1];
+  const char *p = strchr(optstring, opt);
+
+  if (p == nullptr) {
+    return '?';
+  }
+  if (p[1] == ':') {
+    optind++;
+    if (optind >= argc) {
+      return '?';
+    }
+    optarg = argv[optind];
+    optind++;
+  }
+  return opt;
+}
