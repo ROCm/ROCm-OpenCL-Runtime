@@ -94,6 +94,11 @@ target_sources(amdocl PRIVATE
   cl_svm.cpp
   cl_thread_trace_amd.cpp)
 
+if(WIN32)
+  target_sources(amdocl PRIVATE
+  cl_runtime.cpp)
+endif()
+
 if(BUILD_SHARED_LIBS)
   if(WIN32)
     target_sources(amdocl PRIVATE amdocl.def)
@@ -104,6 +109,11 @@ if(BUILD_SHARED_LIBS)
     target_link_libraries(amdocl PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_LIST_DIR}/amdocl.map")
     set_target_properties(amdocl PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/amdocl.map")
   endif()
+endif()
+
+if(WIN32)
+  configure_file(amdocl.rc.in amdocl_info.rc @ONLY)
+  target_sources(amdocl PRIVATE amdocl_info.rc)
 endif()
 
 target_link_libraries(amdocl PUBLIC rocclr)
