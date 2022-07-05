@@ -1,3 +1,7 @@
+/* Modifications Copyright(C) 2022 Advanced Micro Devices, Inc.
+ * All rights reserved.
+ */
+
 /*
  * Copyright (c) 2016-2019 The Khronos Group Inc.
  *
@@ -135,6 +139,16 @@ void khrIcdOsVendorsEnumerate(void)
         }
 
         closedir(dir);
+
+        KHRicdVendor *vendorIterator;
+        for (vendorIterator = khrIcdVendors; vendorIterator; vendorIterator = vendorIterator->next)
+        {
+            if (vendorIterator->libName != NULL)
+            {
+                free(vendorIterator->libName);
+                vendorIterator->libName = NULL;
+            }
+        }
     }
 
     if (NULL != envPath)

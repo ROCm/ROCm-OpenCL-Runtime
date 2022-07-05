@@ -1,3 +1,7 @@
+/* Modifications Copyright(C) 2022 Advanced Micro Devices, Inc.
+ * All rights reserved.
+ */
+
 /*
  * Copyright (c) 2016-2019 The Khronos Group Inc.
  *
@@ -235,6 +239,17 @@ BOOL CALLBACK khrIcdOsVendorsEnumerate(PINIT_ONCE InitOnce, PVOID Parameter, PVO
     {
         KHR_ICD_TRACE("Failed to close platforms key %s, ignoring\n", platformsName);
     }
+
+    KHRicdVendor *vendorIterator;
+    for (vendorIterator = khrIcdVendors; vendorIterator; vendorIterator = vendorIterator->next)
+    {
+        if (vendorIterator->libName != NULL)
+        {
+            free(vendorIterator->libName);
+            vendorIterator->libName = NULL;
+        }
+    }
+
     return status;
 }
 
