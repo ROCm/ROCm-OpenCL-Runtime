@@ -46,23 +46,38 @@ struct DeviceCounterInfo {
 };
 
 static const DeviceCounterInfo DeviceInfo[]{
+#ifdef _WIN32
+    // GFX11 supports performance counter on Windows only.
+    {"gfx1100",
+     11,
+     {{139, 0, 4}, {74, 0, 13}}},  // {SQWGP, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                   // reg 0, Me1 busy for packet decode}
+    {"gfx1101",
+     11,
+     {{139, 0, 4}, {74, 0, 13}}},  // {SQWGP, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                   // reg 0, Me1 busy for packet decode}
+    {"gfx1102",
+     11,
+     {{139, 0, 4}, {74, 0, 13}}},  // {SQWGP, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                   // reg 0, Me1 busy for packet decode}
+#endif
     // GFX10
     {"gfx1000",
      10,
-     {{15, 0, 4}, {77, 1, 2}}},  // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {MCVML2_l,
-                                 // reg 0, BigK bank 0 hits}
+     {{15, 0, 4}, {74, 0, 13}}}, // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                 // reg 0, Me1 busy for packet decode}
     {"gfx1010",
      10,
-     {{15, 0, 4}, {77, 1, 2}}},  // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {MCVML2_l,
-                                 // reg 0, BigK bank 0 hits}
+     {{15, 0, 4}, {74, 0, 13}}}, // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                 // reg 0, Me1 busy for packet decode}
     {"gfx1011",
      10,
-     {{15, 0, 4}, {77, 1, 2}}},  // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {MCVML2_l,
-                                 // reg 0, BigK bank 0 hits}
+     {{15, 0, 4}, {74, 0, 13}}}, // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                 // reg 0, Me1 busy for packet decode}
     {"gfx1012",
      10,
-     {{15, 0, 4}, {77, 1, 2}}},  // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {MCVML2_l,
-                                 // reg 0, BigK bank 0 hits}
+     {{15, 0, 4}, {74, 0, 13}}}, // {SQ, reg 0, SQ_PERF_SEL_WAVES}, {CPC,
+                                 // reg 0, Me1 busy for packet decode}
     // GFX9
     {"gfx900",
      9,
@@ -753,7 +768,7 @@ void OCLPerfCounters::run(void) {
       break;
     case 1:
       if (devId >= 9) {
-        SNPRINTF(buf, sizeof(buf), "BigK Bank0 hits: %lu  ", (long)result);
+        SNPRINTF(buf, sizeof(buf), "Me1 busy for packet decode: %lu  ", (long)result);
       } else {
         SNPRINTF(buf, sizeof(buf), "GRBM CP Busy: %lu  ", (long)result);
       }
